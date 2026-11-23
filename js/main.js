@@ -5,6 +5,7 @@ import {
   posOf, serialize, deserialize,
 } from './game.js';
 import { preloadImages } from './assets.js';
+import { createAudio } from './audio.js';
 
 const STORAGE_KEY = 'ngonet:game:v1';
 const BEST_KEY = 'ngonet:best';
@@ -18,7 +19,10 @@ const els = {
   notice: $('notice'), shuffleBtn: $('shuffleBtn'), restartBtn: $('restartBtn'),
   confirmModal: $('confirmModal'), confirmYes: $('confirmYes'), confirmNo: $('confirmNo'),
   winModal: $('winModal'), winScore: $('winScore'), winBest: $('winBest'), playAgainBtn: $('playAgainBtn'), confetti: $('confetti'),
+  musicBtn: $('musicBtn'), sfxBtn: $('sfxBtn'),
 };
+
+const audio = createAudio();
 
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const reduced = () => motionQuery.matches;
@@ -209,6 +213,7 @@ function elAtIndex(i) {
 function select(i) {
   selected = i;
   elAtIndex(i)?.classList.add('selected');
+  audio.sfx.select();
 }
 function deselect() {
   if (selected !== null) elAtIndex(selected)?.classList.remove('selected');
@@ -233,6 +238,7 @@ function attemptMatch(i, j) {
   selected = null;
 
   if (!res.ok) {
+    audio.sfx.fail();
     for (const el of [elA, elB]) {
       if (!el) continue;
       el.classList.remove('selected');
@@ -249,6 +255,7 @@ function attemptMatch(i, j) {
     el.disabled = true;
   }
   drawPath(res.path.points);
+  audio.sfx.match(res.combo);
   const ids = res.tiles.map((t) => t.id);
   window.setTimeout(() => {
     for (const el of [elA, elB]) el.classList.add('removing');
@@ -379,6 +386,14 @@ function bindEvents() {
   els.board.addEventListener('contextmenu', (e) => e.preventDefault());
 
   els.shuffleBtn.addEventListener('click', onShuffle);
+  els.musicBtn.addEventListener('click', () => audio.setMusic(!audio.settings.music));
+  els.sfxBtn.addEventListener('click', () => audio.setSfx(!audio.settings.sfx));
+  audio.onChange((s) => {
+    els.musicBtn.setAttribute('aria-pressed', String(s.music));
+    els.sfxBtn.setAttribute('aria-pressed', String(s.sfx));
+    els.musicBtn.title = s.music ? 'Matikan musik' : 'Nyalakan musik';
+    els.sfxBtn.title = s.sfx ? 'Matikan efek suara' : 'Nyalakan efek suara';
+  });
   els.restartBtn.addEventListener('click', () => openModal(els.confirmModal, els.confirmNo));
   els.confirmNo.addEventListener('click', () => closeModal(els.confirmModal));
   els.confirmYes.addEventListener('click', () => { closeModal(els.confirmModal); newGame(); });
@@ -425,6 +440,8 @@ async function start() {
   updateStats();
   save();
   checkDeadlock();
+  // Muat musik di latar belakang setelah papan tampil (diputar pada sentuhan pertama).
+  if (audio.settings.music) window.setTimeout(() => audio.preload(), 300);
 }
 
 els.retryBtn.addEventListener('click', () => window.location.reload());
@@ -434,5 +451,6 @@ start();
 window.__ngonet = {
   get state() { return state; },
   get selected() { return selected; },
+  audio,
   PAIRS,
 };

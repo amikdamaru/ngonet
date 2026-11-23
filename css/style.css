@@ -91,7 +91,31 @@ button { font: inherit; color: inherit; }
   padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 14px) calc(var(--safe-l) + 12px);
   gap: 10px;
 }
-.brand { text-align: center; }
+.brand {
+  width: var(--board);
+  display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 4px;
+  text-align: center;
+}
+.icon-btn {
+  appearance: none;
+  width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center;
+  border-radius: 12px;
+  border: 1.5px solid var(--tile-border);
+  background: var(--tile);
+  color: var(--text);
+  box-shadow: 0 2px 0 var(--tile-border);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform .08s ease, opacity .15s ease, color .15s ease;
+}
+.icon-btn:active { transform: translateY(2px); box-shadow: none; }
+.icon-btn:focus-visible { outline: 3px solid rgba(200, 159, 117, .5); outline-offset: 2px; }
+.icon-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn .off-slash { display: none; }
+.icon-btn[aria-pressed="false"] { color: var(--text-2-strong); background: transparent; box-shadow: none; }
+.icon-btn[aria-pressed="false"] .off-slash { display: inline; }
+.icon-btn[aria-pressed="false"] .on-wave { display: none; }
 /* Area permainan mengisi ruang tersisa & berada di tengah; tombol tetap di bawah (mudah dijangkau jempol). */
 .play {
   flex: 1 0 auto; width: 100%;

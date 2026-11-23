@@ -104,6 +104,62 @@ export function findPath(isEmpty, rows, cols, a, b, maxTurns = 2) {
   return { turns: dist[found], points: compress(cells), cells };
 }
 
+/**
+ * Semua sel TERISI (selain `a`) yang dapat dihubungkan dengan `a` (≤ maxTurns belokan),
+ * jalur hanya melewati sel kosong / area virtual. Satu BFS untuk semua tujuan sekaligus.
+ * Dipakai generator papan.
+ * @returns {number[]} indeks r*cols+c
+ */
+export function reachableTargets(isEmpty, rows, cols, a, maxTurns = 2) {
+  const W = cols + 2;
+  const size = (rows + 2) * W * 4;
+  const dist = new Int8Array(size).fill(127);
+  const maxPush = size * (maxTurns + 1) + 8;
+  const dq = new Int32Array(maxPush * 2);
+  let head = maxPush, tail = maxPush;
+  const key = (r, c, d) => (((r + 1) * W) + (c + 1)) * 4 + d;
+  const inBoard = (r, c) => r >= 0 && r < rows && c >= 0 && c < cols;
+  const inPadded = (r, c) => r >= -1 && r <= rows && c >= -1 && c <= cols;
+  const seen = new Uint8Array(rows * cols);
+  const out = [];
+  // sel terisi = tujuan (dicatat, tidak dilewati); sel kosong/virtual = dilewati
+  const visit = (nr, nc) => {
+    if (!inPadded(nr, nc)) return false;
+    if (inBoard(nr, nc) && !isEmpty(nr, nc)) {
+      const i = nr * cols + nc;
+      if (!seen[i] && !(nr === a.r && nc === a.c)) { seen[i] = 1; out.push(i); }
+      return false;
+    }
+    return true;
+  };
+
+  for (let d = 0; d < 4; d++) {
+    const nr = a.r + DIRS[d][0], nc = a.c + DIRS[d][1];
+    if (!visit(nr, nc)) continue;
+    const k = key(nr, nc, d);
+    dist[k] = 0; dq[tail++] = k;
+  }
+  while (head < tail) {
+    const k = dq[head++];
+    const d = k & 3, cell = k >> 2;
+    const r = Math.floor(cell / W) - 1, c = (cell % W) - 1;
+    const cost = dist[k];
+    for (let nd = 0; nd < 4; nd++) {
+      if (nd === ((d + 2) & 3)) continue;
+      const ncost = cost + (nd === d ? 0 : 1);
+      if (ncost > maxTurns) continue;
+      const nr = r + DIRS[nd][0], nc = c + DIRS[nd][1];
+      if (!visit(nr, nc)) continue;
+      const nk = key(nr, nc, nd);
+      if (ncost < dist[nk]) {
+        dist[nk] = ncost;
+        if (nd === d) dq[--head] = nk; else dq[tail++] = nk;
+      }
+    }
+  }
+  return out;
+}
+
 function compress(cells) {
   if (cells.length <= 2) return cells.slice();
   const out = [cells[0]];

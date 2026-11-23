@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>NGONET deadlock stats</title>
+  <style>body{font:14px/1.5 system-ui,sans-serif;background:#F5F0E6;color:#665644;margin:16px}pre{white-space:pre-wrap}</style>
+</head>
+<body>
+  <h1>NGONET – statistik deadlock & percabangan</h1>
+  <p>Pemain disimulasikan; saat tidak ada langkah, Shuffle (susunan solvable). <code>?n=200&amp;report=1</code></p>
+  <pre id="out">Menghitung…</pre>
+  <script type="module">
+    import { createGame, shuffleBoard, pathBetween, remaining, shuffleInPlace } from '../js/game.js';
+    import { buildSolvableBoard, pairUp } from '../js/generator.js';
+    import { ROWS, COLS, TILE_GROUPS } from '../js/config.js';
+
+    const params = new URLSearchParams(location.search);
+    const N = Number(params.get('n') || 200);
+    const out = document.getElementById('out');
+    const log = (s) => { out.textContent += s + '\n'; };
+    out.textContent = '';
+    function mulberry32(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+    /** Semua pasangan sejenis yang bisa dihubungkan saat ini. */
+    function availablePairs(st) {
+      const m = new Map();
+      st.board.forEach((t, i) => { if (t) (m.get(t.type) || m.set(t.type, []).get(t.type)).push(i); });
+      const res = [];
+      for (const idx of m.values()) for (let x = 0; x < idx.length; x++) for (let y = x + 1; y < idx.length; y++) {
+        if (pathBetween(st, idx[x], idx[y])) res.push([idx[x], idx[y]]);
+      }
+      return res;
+    }
+    /** Ada tile dengan ≥2 calon pasangan yang bisa dihubungkan → pemain harus memilih. */
+    function isBranch(av) {
+      const deg = new Map();
+      for (const [i, j] of av) { deg.set(i, (deg.get(i) || 0) + 1); deg.set(j, (deg.get(j) || 0) + 1); }
+      for (const d of deg.values()) if (d >= 2) return true;
+      return false;
+    }
+    const countAfter = (st, [a, b]) => {
+      const ta = st.board[a], tb = st.board[b];
+      st.board[a] = null; st.board[b] = null;
+      const n = availablePairs(st).length;
+      st.board[a] = ta; st.board[b] = tb;
+      return n;
+    };
+
+    function play(groups, player, seed) {
+      const rng = mulberry32(seed);
+      const st = createGame(rng, groups);
+      let shuffles = 0, branches = 0, turns = 0;
+      for (let guard = 0; guard < 3000 && remaining(st) > 0; guard++) {
+        const av = availablePairs(st);
+        if (!av.length) { shuffleBoard(st, rng); shuffles++; continue; }
+        turns++;
+        if (isBranch(av)) branches++;
+        let pick = av[Math.floor(rng() * av.length)];
+        if (player === 'careful' && remaining(st) > 2) {
+          const safe = av.filter((p) => countAfter(st, p) > 0);
+          if (safe.length) pick = safe[Math.floor(rng() * safe.length)];
+        } else if (player === 'worst') {
+          let worst = Infinity;
+          for (const p of av) { const n = countAfter(st, p); if (n < worst) { worst = n; pick = p; } }
+        }
+        st.board[pick[0]] = null; st.board[pick[1]] = null;
+      }
+      return { shuffles, branches };
+    }
+
+    function stats(label, groups, player) {
+      const runs = [];
+      for (let s = 1; s <= N; s++) runs.push(play(groups, player, s * 7919));
+      const arr = runs.map((r) => r.shuffles).sort((a, b) => a - b);
+      const mean = arr.reduce((a, b) => a + b, 0) / N;
+      const res = {
+        label, player, mean,
+        p90: arr[Math.floor(0.9 * (N - 1))], max: arr[N - 1],
+        zeroPct: (100 * arr.filter((x) => x === 0).length) / N,
+        branches: runs.reduce((a, r) => a + r.branches, 0) / N,
+      };
+      log(`${label.padEnd(30)} [${player.padEnd(7)}] shuffle/game ${mean.toFixed(2)} | p90 ${res.p90} | maks ${res.max} | tanpa shuffle ${res.zeroPct.toFixed(0)}% | giliran bercabang ${res.branches.toFixed(1)}/32`);
+      return res;
+    }
+
+    const COMPOSITIONS = {
+      'semua 2x (v2)': [{ copies: 2, types: 32 }],
+      '8x4 + 16x2': [{ copies: 4, types: 8 }, { copies: 2, types: 16 }],
+      ['AKTIF ' + TILE_GROUPS.map((g) => `${g.types}x${g.copies}`).join(' + ')]: TILE_GROUPS,
+      '4x6 + 6x4 + 8x2': [{ copies: 6, types: 4 }, { copies: 4, types: 6 }, { copies: 2, types: 8 }],
+    };
+    const result = { N, rows: [] };
+    try {
+      for (const [label, groups] of Object.entries(COMPOSITIONS)) {
+        for (const player of (params.get('players') || 'random,careful').split(',')) result.rows.push(stats(label, groups, player));
+        log('');
+      }
+    } catch (e) { result.error = e.message; log('ERROR ' + e.message); }
+    if (params.has('report')) fetch('report.php?name=stats', { method: 'POST', body: JSON.stringify(result) });
+  </script>
+</body>
+</html>

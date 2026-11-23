@@ -2,7 +2,7 @@
 
 **Classic Tile Matching Game – Household Edition**
 
-Permainan Onet Classic bertema perabotan & perlengkapan rumah tangga. Papan 8×8 (32 pasangan dari 48 gambar),
+Permainan Onet Classic bertema perabotan & perlengkapan rumah tangga. Papan 8×8 berisi 64 tile dari 48 gambar — sebagian gambar muncul 4× atau 6× sehingga pemain harus memilih pasangan dengan strategi (komposisi diatur di `js/config.js` → `TILE_GROUPS`). Papan awal & hasil Shuffle selalu bisa diselesaikan,
 tanpa timer, skor dengan combo progresif, Shuffle tanpa batas (penalti 50%), dan dapat di-install sebagai PWA yang
 berjalan offline. Tanpa backend, tanpa build step: HTML + CSS + JavaScript (ES modules).
 
@@ -43,10 +43,13 @@ js/config.js             konstanta aturan main
 js/pathfinder.js         pencarian jalur Onet (0-1 BFS, maks 2 belokan, virtual border)
 js/scoring.js            combo progresif & penalti shuffle
 js/game.js               state permainan murni (buat papan, match, shuffle, simpan/muat)
+js/generator.js          generator susunan papan yang dijamin bisa diselesaikan
 js/assets.js             preload gambar
+js/audio.js              musik latar (MP3) + sound effect sintesis Web Audio
 js/main.js               controller UI (render, input, garis SVG, animasi, modal)
 icons/                   ikon PWA (192/512 any + maskable, apple-touch, favicon)
 public/assets/onet/tiles tile-01.png … tile-48.png (128×128, latar transparan)
+public/assets/onet/audio bgm.mp3 (musik latar, loop)
 source/spritesheet.png   spritesheet asli 8×6
 tools/                   slice-spritesheet.php, make-icons.php, make-placeholders.php
 tests/                   test suite browser (index.html), offline check, screenshot harness
@@ -64,6 +67,13 @@ Skrip mendeteksi tiap kartu dari profil piksel (harus tepat 8 kolom × 6 baris; 
 menebak), mengambil ilustrasi di dalam kartu, membuang latar kartu menjadi transparan, dan menulis
 `tools/out/preview.png` untuk pengecekan visual. Setelah aset atau kode berubah pada rilis, naikkan
 `CACHE_VERSION` di `sw.js`.
+
+## Audio
+
+Musik latar `public/assets/onet/audio/bgm.mp3` diputar loop setelah sentuhan pertama (aturan autoplay browser) dan
+dijeda saat aplikasi disembunyikan. Sound effect (pilih tile, match berhasil — nadanya naik seiring combo, match gagal)
+disintesis dengan Web Audio API, tanpa file. Musik & efek bisa dimatikan lewat tombol di header (tersimpan).
+Untuk mengganti musik: timpa `bgm.mp3`, lalu naikkan `MEDIA_VERSION` di `sw.js`.
 
 ## Test
 

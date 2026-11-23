@@ -1,7 +1,8 @@
 // State dan aturan permainan NGONET (murni, tanpa DOM, sehingga mudah diuji).
-import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS } from './config.js';
+import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS, TILE_GROUPS, MAX_COPIES, validateGroups } from './config.js';
 import { findPath } from './pathfinder.js';
 import { scoreMatch, shufflePenalty } from './scoring.js';
+import { buildSolvableBoard, pairUp } from './generator.js';
 
 export function shuffleInPlace(arr, rng = Math.random) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -17,14 +18,20 @@ export function pickTypes(count = PAIRS, total = TOTAL_ASSETS, rng = Math.random
   return shuffleInPlace(all, rng).slice(0, count);
 }
 
-/** Buat permainan baru: 32 jenis acak, masing-masing tepat 2 tile, posisi diacak. */
-export function createGame(rng = Math.random) {
-  const types = pickTypes(PAIRS, TOTAL_ASSETS, rng);
+/**
+ * Buat permainan baru. Jenis gambar dipilih acak dari 48 aset sesuai komposisi TILE_GROUPS
+ * (mis. 2 jenis ×6, 4 jenis ×4, 18 jenis ×2), lalu disusun menjadi papan yang solvable.
+ */
+export function createGame(rng = Math.random, groups = TILE_GROUPS) {
+  const distinct = validateGroups(groups);
+  const types = pickTypes(distinct, TOTAL_ASSETS, rng);
   const tiles = [];
   let id = 0;
-  for (const type of types) {
-    tiles.push({ id: id++, type });
-    tiles.push({ id: id++, type });
+  let k = 0;
+  for (const g of groups) {
+    for (let n = 0; n < g.types; n++, k++) {
+      for (let c = 0; c < g.copies; c++) tiles.push({ id: id++, type: types[k] });
+    }
   }
   const state = {
     rows: ROWS,
@@ -36,11 +43,34 @@ export function createGame(rng = Math.random) {
     matches: 0,
     shuffles: 0,
   };
-  // Papan awal diacak ulang bila kebetulan tidak punya satu pun langkah,
-  // agar permainan baru tidak pernah dimulai dalam kondisi buntu.
-  // (Shuffle oleh pemain sengaja TIDAK dijamin solvable, sesuai aturan.)
-  let attempts = 0;
-  do { shuffleInPlace(tiles, rng); } while (!hasAvailableMove(state) && ++attempts < 100);
+  arrangeSolvable(state, rng);
+  return state;
+}
+
+/**
+ * Susun ulang tile yang tersisa pada sel-sel yang masih terisi menjadi susunan yang
+ * DIJAMIN bisa diselesaikan (lihat generator.js).
+ *
+ * Untuk gambar yang muncul 2x, papan solvable tidak bisa buntu. Gambar yang muncul 4x/6x
+ * memberi pemain pilihan pasangan; pilihan yang kurang tepat BISA membuat papan buntu —
+ * itulah unsur strateginya, dan Shuffle kembali menyusun papan yang solvable.
+ * Fallback (praktis tidak pernah terjadi): acak seragam.
+ */
+export function arrangeSolvable(state, rng = Math.random) {
+  const slots = [];
+  const tiles = [];
+  state.board.forEach((t, i) => { if (t) { slots.push(i); tiles.push(t); } });
+  if (!slots.length) return state;
+  const res = buildSolvableBoard(state.rows, state.cols, slots, pairUp(tiles), rng);
+  if (res) {
+    state.board = res.board;
+  } else {
+    let attempts = 0;
+    do {
+      shuffleInPlace(tiles, rng);
+      slots.forEach((slot, k) => { state.board[slot] = tiles[k]; });
+    } while (!hasAvailableMove(state) && ++attempts < 100);
+  }
   return state;
 }
 
@@ -83,18 +113,12 @@ export function tryMatch(state, i, j, now) {
 }
 
 /**
- * Acak ulang posisi tile yang tersisa di antara sel-sel yang masih terisi.
+ * Acak ulang posisi tile yang tersisa di antara sel-sel yang masih terisi (susunan solvable).
  * Jumlah tile, jenis, dan pasangan tidak berubah; tile yang hilang tidak kembali.
  * Skor dipotong 50% (Math.ceil) dan combo direset.
  */
 export function shuffleBoard(state, rng = Math.random) {
-  const slots = [];
-  const tiles = [];
-  state.board.forEach((t, i) => {
-    if (t) { slots.push(i); tiles.push(t); }
-  });
-  shuffleInPlace(tiles, rng);
-  slots.forEach((slot, k) => { state.board[slot] = tiles[k]; });
+  arrangeSolvable(state, rng);
   state.score = shufflePenalty(state.score);
   state.combo = 0;
   state.lastMatchAt = null;
@@ -139,7 +163,7 @@ export function deserialize(json) {
   if (!d || d.v !== 1 || d.rows !== ROWS || d.cols !== COLS) return null;
   if (!Array.isArray(d.board) || d.board.length !== ROWS * COLS) return null;
   const board = d.board.map((t) => (t ? { id: t[0], type: t[1] } : null));
-  // Validasi: setiap jenis muncul genap, jenis dalam rentang aset, id unik.
+  // Validasi: setiap jenis muncul genap (≤ MAX_COPIES), jenis dalam rentang aset, id unik.
   const counts = new Map();
   const ids = new Set();
   for (const t of board) {
@@ -149,7 +173,7 @@ export function deserialize(json) {
     ids.add(t.id);
     counts.set(t.type, (counts.get(t.type) || 0) + 1);
   }
-  for (const n of counts.values()) if (n !== 2) return null;
+  for (const n of counts.values()) if (n % 2 !== 0 || n > MAX_COPIES) return null;
   if (ids.size === 0) return null; // permainan selesai: mulai baru
   const score = Number.isFinite(d.score) && d.score >= 0 ? Math.floor(d.score) : 0;
   return {

@@ -6,10 +6,15 @@
  *   saat online, fallback ke cache saat offline / koneksi lambat.
  * - Gambar   : cache-first + revalidasi di latar belakang (stale-while-revalidate),
  *   sehingga cepat dan tetap ter-update pada kunjungan berikutnya.
+ * - Audio    : cache-first dari cache media terpisah (BGM tidak diunduh ulang tiap rilis).
  * - Activate : hapus cache versi lama.
  * Naikkan CACHE_VERSION setiap rilis agar precache diperbarui.
  */
-const CACHE_VERSION = 'ngonet-v1';
+const CACHE_VERSION = 'ngonet-v4';
+// File media besar (BGM ±5 MB) disimpan di cache terpisah agar tidak diunduh ulang setiap
+// CACHE_VERSION naik. Naikkan MEDIA_VERSION hanya bila file audionya diganti.
+const MEDIA_VERSION = 'ngonet-media-v1';
+const MEDIA = ['public/assets/onet/audio/bgm.mp3'];
 const NETWORK_TIMEOUT_MS = 3000;
 
 const TILES = Array.from({ length: 48 }, (_, i) => `public/assets/onet/tiles/tile-${String(i + 1).padStart(2, '0')}.png`);
@@ -24,6 +29,8 @@ const PRECACHE = [
   'js/pathfinder.js',
   'js/scoring.js',
   'js/assets.js',
+  'js/generator.js',
+  'js/audio.js',
   'icons/favicon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -38,6 +45,10 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE_VERSION);
     // cache: 'reload' memastikan file diambil dari jaringan, bukan HTTP cache lama.
     await cache.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' })));
+    const media = await caches.open(MEDIA_VERSION);
+    for (const url of MEDIA) {
+      if (!(await media.match(url))) await media.add(new Request(url, { cache: 'reload' }));
+    }
     await self.skipWaiting();
   })());
 });
@@ -45,7 +56,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.startsWith('ngonet-') && k !== CACHE_VERSION).map((k) => caches.delete(k)));
+    await Promise.all(keys
+      .filter((k) => k.startsWith('ngonet-') && k !== CACHE_VERSION && k !== MEDIA_VERSION)
+      .map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -95,13 +108,25 @@ async function staleWhileRevalidate(event) {
   return new Response('', { status: 504, statusText: 'Offline' });
 }
 
+/** Media besar: cache-first (cache media terpisah, versi via MEDIA_VERSION). */
+async function cacheFirstMedia(request) {
+  const cache = await caches.open(MEDIA_VERSION);
+  const cached = await cache.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response && response.ok && response.status === 200) cache.put(request, response.clone());
+  return response;
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // NGONET tidak memakai sumber eksternal
 
-  if (isImage(request, url)) {
+  if (/\.(mp3|ogg|m4a|wav)$/i.test(url.pathname)) {
+    event.respondWith(cacheFirstMedia(request));
+  } else if (isImage(request, url)) {
     event.respondWith(staleWhileRevalidate(event));
   } else {
     event.respondWith(networkFirst(request));

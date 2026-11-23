@@ -24,7 +24,9 @@
     const pair = (pred = () => true) => {
       const m = new Map();
       st().board.forEach((t, i) => { if (t) (m.get(t.type) || m.set(t.type, []).get(t.type)).push(i); });
-      for (const [i, j] of m.values()) if (pathBetween(st(), i, j) && pred(i, j)) return [i, j];
+      for (const l of m.values()) for (let x = 0; x < l.length; x++) for (let y = x + 1; y < l.length; y++) {
+        if (pathBetween(st(), l[x], l[y]) && pred(l[x], l[y])) return [l[x], l[y]];
+      }
       return null;
     };
     if (scene === 'play') {

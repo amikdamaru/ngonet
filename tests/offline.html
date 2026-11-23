@@ -37,7 +37,10 @@
             if (st.score > before) { matched = true; break outer; }
           }
         }
-        finish({ phase, ok: tiles.length > 0 && loaded === tiles.length, tiles: tiles.length, loaded, matched, controlled: !!navigator.serviceWorker.controller, ms: Date.now() - t0 });
+        const base = { phase, ok: tiles.length > 0 && loaded === tiles.length, tiles: tiles.length, loaded, matched, controlled: !!navigator.serviceWorker.controller, ms: Date.now() - t0 };
+        fetch('../public/assets/onet/audio/bgm.mp3').then((r) => r.blob())
+          .then((b) => finish({ ...base, bgmBytes: b.size }))
+          .catch((e) => finish({ ...base, ok: false, bgmError: String(e) }));
         return;
       }
       if (Date.now() - t0 > 20000) { finish({ phase, ok: false, error: 'app tidak tampil', body: doc ? doc.body.innerText.slice(0, 200) : 'no doc' }); return; }

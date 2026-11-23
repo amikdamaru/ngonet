@@ -1,9 +1,11 @@
 // NGONET test suite (berjalan di browser; hasil ditulis ke DOM agar bisa dibaca headless Chrome).
-import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS, allTileSources } from '../js/config.js';
+import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS, TILE_GROUPS, MAX_COPIES, allTileSources } from '../js/config.js';
 import {
   createGame, tryMatch, shuffleBoard, pathBetween, remaining, isWon, hasAvailableMove,
-  isEmptyFn, posOf, serialize, deserialize,
+  isEmptyFn, posOf, serialize, deserialize, shuffleInPlace,
 } from '../js/game.js';
+import { buildSolvableBoard, pairUp } from '../js/generator.js';
+import { BGM_SRC } from '../js/audio.js';
 import { findPath, validatePath } from '../js/pathfinder.js';
 import { scoreMatch, shufflePenalty } from '../js/scoring.js';
 
@@ -69,6 +71,17 @@ function makeState(rows) {
 }
 const FULL = '########';
 
+/** Semua pasangan sejenis (termasuk jenis 4x/6x) yang bisa dihubungkan saat ini. */
+function allPairs(st) {
+  const m = new Map();
+  st.board.forEach((t, i) => { if (t) (m.get(t.type) || m.set(t.type, []).get(t.type)).push(i); });
+  const res = [];
+  for (const idx of m.values()) for (let x = 0; x < idx.length; x++) for (let y = x + 1; y < idx.length; y++) {
+    if (pathBetween(st, idx[x], idx[y])) res.push([idx[x], idx[y]]);
+  }
+  return res;
+}
+
 function checkPath(state, i, j) {
   const p = pathBetween(state, i, j);
   if (!p) return null;
@@ -116,26 +129,107 @@ await test('1. Papan baru berisi 64 tile', () => {
   }
 });
 
-await test('2–3. Ada 32 jenis gambar dari 48 aset, masing-masing tepat 2 kali', () => {
+const groupLabel = TILE_GROUPS.map((g) => `${g.types} jenis ×${g.copies}`).join(' + ');
+await test(`2–3. Komposisi gambar sesuai konfigurasi (${groupLabel}) dari 48 aset`, () => {
   const seen = new Set();
+  const want = TILE_GROUPS.map((g) => Array(g.types).fill(g.copies)).flat().sort((a, b) => a - b).join();
   for (let k = 0; k < 200; k++) {
     const g = createGame();
     const counts = new Map();
     g.board.forEach((t) => counts.set(t.type, (counts.get(t.type) || 0) + 1));
-    eq(counts.size, PAIRS, 'jumlah jenis');
-    for (const [type, n] of counts) {
-      eq(n, 2, `jenis ${type} muncul`);
+    eq([...counts.values()].sort((a, b) => a - b).join(), want, 'jumlah kemunculan per jenis');
+    for (const type of counts.keys()) {
       assert(type >= 1 && type <= TOTAL_ASSETS, 'jenis di luar rentang aset');
       seen.add(type);
     }
     eq(new Set(g.board.map((t) => t.id)).size, 64, 'id unik');
   }
   eq(seen.size, TOTAL_ASSETS, 'seluruh 48 aset terpakai dalam 200 permainan acak');
+  // jenis yang mendapat 4x/6x juga acak antar-permainan
+  const sixA = (g) => { const c = new Map(); g.board.forEach((t) => c.set(t.type, (c.get(t.type) || 0) + 1)); return [...c].filter(([, n]) => n === MAX_COPIES).map(([t]) => t).sort().join(); };
+  assert(sixA(createGame(mulberry32(11))) !== sixA(createGame(mulberry32(12))), 'jenis ×6 selalu sama');
   return 'semua 48 aset muncul dalam 200 permainan';
+});
+
+await test('Percabangan (contoh A1/A2/A6): pilihan pasangan menentukan jalur B6↔A3 terbuka atau tidak', () => {
+  // Baris A = r0, B = r1; kolom 1..8 = c0..c7.  X muncul 4x: A1, A2, A6, H8.  Y: A3 & B6.
+  const board = [
+    'XXY##X##',  // A1=X A2=X A3=Y A6=X
+    '#####Y##',  // B6=Y
+    FULL, FULL, FULL, FULL, FULL,
+    '#######X',  // H8=X
+  ];
+  const A1 = 0, A2 = 1, A3 = 2, A6 = 5, B6 = 13;
+  // Pilihan 1: A1 dengan A6 (lewat atas papan) → B6 sekarang bisa ke A3
+  let { state } = makeState(board);
+  assert(pathBetween(state, A1, A2) && pathBetween(state, A1, A6), 'A1 harus bisa memilih A2 atau A6');
+  assert(!pathBetween(state, B6, A3), 'awalnya B6–A3 tertutup');
+  assert(tryMatch(state, A1, A6, 0).ok, 'A1–A6');
+  assert(pathBetween(state, B6, A3), 'setelah A1–A6, B6–A3 harus terbuka');
+  // Pilihan 2: A1 dengan A2 → A6 tetap menghalangi, B6–A3 tetap tertutup
+  ({ state } = makeState(board));
+  assert(tryMatch(state, A1, A2, 0).ok, 'A1–A2');
+  assert(!pathBetween(state, B6, A3), 'setelah A1–A2, B6–A3 harus tetap tertutup');
+});
+
+await test('Papan generator memberi pilihan: rata-rata ≥5 giliran bercabang per game (simulasi 40 game)', () => {
+  const rng = mulberry32(21);
+  let branches = 0;
+  for (let k = 0; k < 40; k++) {
+    const g = createGame(rng);
+    while (remaining(g) > 0) {
+      const av = allPairs(g);
+      if (!av.length) { shuffleBoard(g, rng); continue; }
+      const deg = new Map();
+      for (const [i, j] of av) { deg.set(i, (deg.get(i) || 0) + 1); deg.set(j, (deg.get(j) || 0) + 1); }
+      if ([...deg.values()].some((d) => d >= 2)) branches++;
+      const [i, j] = av[Math.floor(rng() * av.length)];
+      g.board[i] = null; g.board[j] = null;
+    }
+  }
+  assert(branches / 40 >= 5, `rata-rata hanya ${(branches / 40).toFixed(1)}`);
+  return `rata-rata ${(branches / 40).toFixed(1)} giliran bercabang dari 32`;
 });
 
 await test('Papan awal tidak pernah buntu (selalu ada ≥1 langkah)', () => {
   for (let k = 0; k < 500; k++) assert(hasAvailableMove(createGame()), `permainan ke-${k} buntu`);
+});
+
+await test('Generator: papan penuh & sebagian selalu solvable (urutan solusi diverifikasi)', () => {
+  const rng = mulberry32(99);
+  for (let k = 0; k < 300; k++) {
+    const g = createGame(rng);
+    const keepPairs = k % 3 === 0 ? 32 : 1 + Math.floor(rng() * 31);
+    const pairs = pairUp(g.board).slice(0, keepPairs);
+    const slots = shuffleInPlace(g.board.map((_, i) => i), rng).slice(0, keepPairs * 2);
+    const res = buildSolvableBoard(ROWS, COLS, slots, pairs, rng);
+    assert(res, `generator gagal di iterasi ${k}`);
+    const sim = { rows: ROWS, cols: COLS, board: res.board };
+    assert(res.board.every((t, i) => !!t === slots.includes(i)), 'tile harus tepat di slot yang diberikan');
+    for (const [i, j] of res.solution) {
+      assert(sim.board[i].type === sim.board[j].type, 'pasangan solusi beda jenis');
+      assert(pathBetween(sim, i, j), 'langkah solusi tidak bisa dihubungkan');
+      sim.board[i] = null; sim.board[j] = null;
+    }
+    eq(remaining(sim), 0, 'solusi harus menghabiskan papan');
+  }
+  return '300 papan, semua solusi valid';
+});
+
+await test('Teorema: bila semua gambar 2x, papan solvable tidak pernah buntu (200 game acak tanpa Shuffle)', () => {
+  const rng = mulberry32(5);
+  const ALL_TWO = [{ copies: 2, types: 32 }];
+  for (let k = 0; k < 200; k++) {
+    const g = createGame(rng, ALL_TWO);
+    // shuffle di tengah permainan juga harus menghasilkan susunan solvable
+    for (let step = 0; remaining(g) > 0; step++) {
+      if (step === 8 && k % 2) shuffleBoard(g, rng);
+      const av = allPairs(g);
+      assert(av.length, `game ${k} buntu dengan ${remaining(g)} tile tersisa`);
+      const [i, j] = av[Math.floor(rng() * av.length)];
+      g.board[i] = null; g.board[j] = null;
+    }
+  }
 });
 
 await test('Posisi dan pemilihan gambar teracak antar-permainan', () => {
@@ -319,7 +413,9 @@ async function loadApp(frame) {
 function findPair(st, wantPath = true) {
   const idx = new Map();
   st.board.forEach((t, i) => { if (t) (idx.get(t.type) || idx.set(t.type, []).get(t.type)).push(i); });
-  for (const [i, j] of idx.values()) if (!!pathBetween(st, i, j) === wantPath) return [i, j];
+  for (const list of idx.values()) for (let x = 0; x < list.length; x++) for (let y = x + 1; y < list.length; y++) {
+    if (!!pathBetween(st, list[x], list[y]) === wantPath) return [list[x], list[y]];
+  }
   return null;
 }
 function findDifferent(st) {
@@ -464,8 +560,66 @@ await test('21–22. Restart: batal tidak mengubah apa pun; setuju → skor 0 & 
   await sleep(450);
 });
 
+await test('Audio SFX: pilih tile → select, match gagal → fail, match berhasil → match', async () => {
+  const A = app.win.__ngonet.audio;
+  assert(A.settings.sfx, 'efek suara harus aktif secara default');
+  const last = () => A.history[A.history.length - 1];
+  const n0 = A.history.length;
+  let pr = findPair(S());
+  for (let t = 0; !pr && t < 20; t++) { app.doc.getElementById('shuffleBtn').click(); await sleep(450); pr = findPair(S()); }
+  const diff = findDifferent(S());
+  tileEl(app.doc, S(), diff[0]).click();
+  eq(last(), 'select', 'tap tile pertama');
+  tileEl(app.doc, S(), diff[1]).click();
+  eq(last(), 'fail', 'pasangan beda gambar');
+  await sleep(400);
+  pr = findPair(S());
+  tileEl(app.doc, S(), pr[0]).click();
+  eq(last(), 'select', 'tap tile pertama (lagi)');
+  tileEl(app.doc, S(), pr[1]).click();
+  eq(last(), 'match', 'match berhasil');
+  eq(A.history.slice(n0 - A.history.length).join(), 'select,fail,select,match', 'urutan sfx');
+  await sleep(700);
+});
+
+await test('Audio toggle: efek suara & musik bisa dimatikan, tersimpan, dan benar-benar membisukan', async () => {
+  const A = app.win.__ngonet.audio;
+  const sfxBtn = app.doc.getElementById('sfxBtn'), musicBtn = app.doc.getElementById('musicBtn');
+  sfxBtn.click();
+  eq(sfxBtn.getAttribute('aria-pressed'), 'false', 'tombol sfx off');
+  eq(JSON.parse(localStorage.getItem('ngonet:audio')).sfx, false, 'tersimpan');
+  const n = A.history.length;
+  const i = S().board.findIndex(Boolean);
+  tileEl(app.doc, S(), i).click(); tileEl(app.doc, S(), i).click(); // pilih lalu batal
+  eq(A.history.length, n, 'tidak boleh ada sfx saat dimatikan');
+  sfxBtn.click();
+  eq(sfxBtn.getAttribute('aria-pressed'), 'true', 'tombol sfx on lagi');
+  musicBtn.click();
+  eq(musicBtn.getAttribute('aria-pressed'), 'false', 'tombol musik off');
+  eq(JSON.parse(localStorage.getItem('ngonet:audio')).music, false, 'musik off tersimpan');
+  await sleep(400);
+  assert(!A.musicPlaying, 'musik harus berhenti');
+  musicBtn.click();
+  eq(musicBtn.getAttribute('aria-pressed'), 'true', 'tombol musik on lagi');
+});
+
+await test('BGM: file termuat, loop, dan diputar setelah interaksi', async () => {
+  const A = app.win.__ngonet.audio;
+  const el = await A.preload();
+  assert(el, 'BGM gagal dimuat');
+  assert(el.loop, 'BGM harus loop');
+  if (!(el.duration > 0)) await new Promise((r) => { el.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 5000); });
+  assert(el.duration > 30, `durasi BGM ${el.duration}`);
+  await waitFor(() => A.musicPlaying, 5000).catch(() => {});
+  assert(A.musicPlaying, 'BGM tidak berputar setelah interaksi');
+  await sleep(900);
+  assert(el.volume > 0.2, `volume BGM ${el.volume}`);
+  return `durasi ${el.duration.toFixed(1)} dtk, volume ${el.volume.toFixed(2)}`;
+});
+
 await test('23–25. Mainkan sampai habis → YOU WIN!, skor akhir benar, PLAY AGAIN', async () => {
   let shuffles = 0, matches = 0;
+  const expectedMatches = remaining(S()) / 2;
   for (let guard = 0; guard < 400 && remaining(S()) > 0; guard++) {
     const pr = findPair(S());
     if (!pr) { app.doc.getElementById('shuffleBtn').click(); shuffles++; await sleep(450); continue; }
@@ -474,7 +628,7 @@ await test('23–25. Mainkan sampai habis → YOU WIN!, skor akhir benar, PLAY A
     await sleep(40);
   }
   eq(remaining(S()), 0, 'semua tile harus habis');
-  eq(matches, 32, 'jumlah matching');
+  eq(matches, expectedMatches, 'jumlah matching = sisa pasangan');
   const modal = app.doc.getElementById('winModal');
   await waitFor(() => !modal.hidden, 3000);
   assert(/YOU\s*WIN!/.test(app.doc.getElementById('winTitle').getAttribute('aria-label')), 'teks YOU WIN!');
@@ -552,15 +706,21 @@ await test('27. Service Worker terdaftar & aktif, cache berisi seluruh aset', as
   }
   assert(reg && reg.active, 'SW belum aktif');
   const keys = await caches.keys();
-  const key = keys.find((k) => k.startsWith('ngonet-'));
+  const key = keys.find((k) => /^ngonet-v\d+$/.test(k));
+  const mediaKey = keys.find((k) => k.startsWith('ngonet-media-'));
   assert(key, 'cache ngonet tidak ada');
+  assert(mediaKey, 'cache media (BGM) tidak ada');
   const cache = await caches.open(key);
-  const need = ['index.html', 'css/style.css', 'js/main.js', 'js/game.js', 'js/pathfinder.js', 'manifest.webmanifest', ...allTileSources()];
+  const need = ['index.html', 'css/style.css', 'js/main.js', 'js/game.js', 'js/pathfinder.js', 'js/generator.js', 'js/audio.js', 'manifest.webmanifest', ...allTileSources()];
   const base = new URL('../', location.href);
   const missing = [];
   for (const p of need) if (!(await cache.match(new URL(p, base).href))) missing.push(p);
   eq(missing.length, 0, 'aset belum ter-cache: ' + missing.join(','));
-  return `${key}, scope ${new URL(reg.scope).pathname}, ${need.length} aset dicek`;
+  const bgm = await (await caches.open(mediaKey)).match(new URL(BGM_SRC, base).href);
+  assert(bgm, 'BGM belum ter-cache');
+  const size = (await bgm.blob()).size;
+  assert(size > 1e6, `ukuran BGM di cache tidak wajar: ${size}`);
+  return `${key} + ${mediaKey} (BGM ${(size / 1048576).toFixed(1)} MB), ${need.length + 1} aset dicek`;
 });
 
 await test('30. Tidak ada request eksternal saat gameplay', async () => {
