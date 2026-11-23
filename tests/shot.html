@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>NGONET screenshot harness</title>
+  <style>html,body{margin:0;background:#888}iframe{border:0;display:block}</style>
+</head>
+<body>
+  <!-- Pemakaian: shot.html?w=390&h=844&scene=start|play|win  (hanya untuk QA visual) -->
+  <iframe id="f"></iframe>
+  <script type="module">
+    import { pathBetween } from '../js/game.js';
+    const p = new URLSearchParams(location.search);
+    const f = document.getElementById('f');
+    f.width = p.get('w') || 390; f.height = p.get('h') || 844;
+    try { localStorage.removeItem('ngonet:game:v1'); } catch {}
+    f.src = '../index.html';
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const scene = p.get('scene') || 'start';
+    while (!(f.contentDocument && f.contentDocument.getElementById('app') && !f.contentDocument.getElementById('app').hidden)) await sleep(30);
+    await sleep(500);
+    const w = f.contentWindow, d = f.contentDocument, st = () => w.__ngonet.state;
+    const el = (i) => d.querySelector(`.tile[data-id="${st().board[i].id}"]`);
+    const pair = (pred = () => true) => {
+      const m = new Map();
+      st().board.forEach((t, i) => { if (t) (m.get(t.type) || m.set(t.type, []).get(t.type)).push(i); });
+      for (const [i, j] of m.values()) if (pathBetween(st(), i, j) && pred(i, j)) return [i, j];
+      return null;
+    };
+    if (scene === 'play') {
+      let a = pair(); el(a[0]).click(); el(a[1]).click();
+      await sleep(700);
+      // pilih pasangan dengan belokan agar garis terlihat jelas, lalu bekukan timer animasi
+      const outside = (i, j) => pathBetween(st(), i, j).points.some((q) => q.r < 0 || q.c < 0 || q.r > 7 || q.c > 7);
+      const b = pair(outside) || pair((i, j) => pathBetween(st(), i, j).turns >= 1) || pair();
+      w.setTimeout = () => 0;
+      el(b[0]).click(); el(b[1]).click();
+      d.querySelectorAll('.link-line, .link-dot').forEach((n) => { n.style.animation = 'none'; n.style.strokeDashoffset = '0'; });
+      d.querySelectorAll('.combo-bar i').forEach((n) => { n.style.animation = 'none'; });
+      const c = st().board.findIndex(Boolean); el(c).click();
+    } else if (scene === 'win') {
+      for (let g = 0; g < 400 && st().board.some(Boolean); g++) {
+        const pr = pair();
+        if (!pr) { d.getElementById('shuffleBtn').click(); await sleep(450); continue; }
+        el(pr[0]).click(); el(pr[1]).click(); await sleep(30);
+      }
+      while (d.getElementById('winModal').hidden) await sleep(50);
+      await sleep(900);
+      d.getElementById('confetti').textContent = '';
+    }
+    document.title = 'READY';
+  </script>
+</body>
+</html>

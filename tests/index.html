@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NGONET tests</title>
+  <style>
+    body { font: 14px/1.45 system-ui, sans-serif; background: #F5F0E6; color: #665644; margin: 16px; }
+    h1 { font-size: 18px; }
+    #summary { font-weight: 700; margin: 8px 0 12px; }
+    li.pass::marker { content: "✔ "; color: #4a8a4a; }
+    li.fail { color: #b0412e; font-weight: 600; }
+    li.fail::marker { content: "✘ "; }
+    .frames { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+    iframe { border: 1px solid #E5DCCB; background: #fff; }
+  </style>
+</head>
+<body>
+  <h1>NGONET – test suite</h1>
+  <div id="summary">Menjalankan…</div>
+  <ol id="results"></ol>
+  <div class="frames" id="frames"></div>
+  <script type="module" src="tests.js"></script>
+</body>
+</html>

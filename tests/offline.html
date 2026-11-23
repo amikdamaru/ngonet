@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>NGONET offline check</title>
+</head>
+<body>
+  <p id="out">Memeriksa…</p>
+  <iframe id="f" width="390" height="844" src="../index.html"></iframe>
+  <script>
+    // Dibuka sekali saat online (agar ikut di-cache SW) lalu sekali lagi saat server dimatikan.
+    // Hasil dikirim ke server laporan terpisah (?reporter=http://host:port/report.php).
+    const params = new URLSearchParams(location.search);
+    const reporter = params.get('reporter');
+    const phase = params.get('phase') || 'online';
+    const t0 = Date.now();
+    function finish(result) {
+      document.getElementById('out').textContent = JSON.stringify(result);
+      if (reporter) fetch(`${reporter}?name=offline-${phase}`, { method: 'POST', mode: 'no-cors', body: JSON.stringify(result) });
+    }
+    (function poll() {
+      const f = document.getElementById('f');
+      let doc = null;
+      try { doc = f.contentDocument; } catch (e) { /* */ }
+      const app = doc && doc.getElementById('app');
+      if (app && !app.hidden) {
+        const tiles = [...doc.querySelectorAll('.tile img')];
+        const loaded = tiles.filter((i) => i.complete && i.naturalWidth > 0).length;
+        // mainkan satu matching untuk memastikan logika berjalan offline
+        const w = f.contentWindow, st = w.__ngonet.state;
+        let matched = false;
+        const before = st.score;
+        outer: for (let i = 0; i < 64; i++) for (let j = i + 1; j < 64; j++) {
+          if (st.board[i] && st.board[j] && st.board[i].type === st.board[j].type) {
+            doc.querySelector(`.tile[data-id="${st.board[i].id}"]`).click();
+            doc.querySelector(`.tile[data-id="${st.board[j].id}"]`).click();
+            if (st.score > before) { matched = true; break outer; }
+          }
+        }
+        finish({ phase, ok: tiles.length > 0 && loaded === tiles.length, tiles: tiles.length, loaded, matched, controlled: !!navigator.serviceWorker.controller, ms: Date.now() - t0 });
+        return;
+      }
+      if (Date.now() - t0 > 20000) { finish({ phase, ok: false, error: 'app tidak tampil', body: doc ? doc.body.innerText.slice(0, 200) : 'no doc' }); return; }
+      setTimeout(poll, 100);
+    })();
+  </script>
+</body>
+</html>
