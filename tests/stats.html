@@ -7,10 +7,10 @@
 </head>
 <body>
   <h1>NGONET – statistik deadlock & percabangan</h1>
-  <p>Pemain disimulasikan; saat tidak ada langkah, Shuffle (susunan solvable). <code>?n=200&amp;report=1</code></p>
+  <p>Pemain disimulasikan (tanpa batas waktu); papan buntu = game over. <code>?n=200&amp;report=1</code></p>
   <pre id="out">Menghitung…</pre>
   <script type="module">
-    import { createGame, shuffleBoard, pathBetween, remaining, shuffleInPlace } from '../js/game.js';
+    import { createGame, pathBetween, remaining } from '../js/game.js';
     import { buildSolvableBoard, pairUp } from '../js/generator.js';
     import { ROWS, COLS, TILE_GROUPS } from '../js/config.js';
 
@@ -52,7 +52,7 @@
       let shuffles = 0, branches = 0, turns = 0;
       for (let guard = 0; guard < 3000 && remaining(st) > 0; guard++) {
         const av = availablePairs(st);
-        if (!av.length) { shuffleBoard(st, rng); shuffles++; continue; }
+        if (!av.length) { shuffles++; break; } // buntu = game over (tanpa Shuffle)
         turns++;
         if (isBranch(av)) branches++;
         let pick = av[Math.floor(rng() * av.length)];
@@ -79,7 +79,7 @@
         zeroPct: (100 * arr.filter((x) => x === 0).length) / N,
         branches: runs.reduce((a, r) => a + r.branches, 0) / N,
       };
-      log(`${label.padEnd(30)} [${player.padEnd(7)}] shuffle/game ${mean.toFixed(2)} | p90 ${res.p90} | maks ${res.max} | tanpa shuffle ${res.zeroPct.toFixed(0)}% | giliran bercabang ${res.branches.toFixed(1)}/32`);
+      log(`${label.padEnd(30)} [${player.padEnd(7)}] buntu (game over) ${(100 * mean).toFixed(0)}% | p90 ${res.p90} | maks ${res.max} | giliran bercabang ${res.branches.toFixed(1)}/32`);
       return res;
     }
 

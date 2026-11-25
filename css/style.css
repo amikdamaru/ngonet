@@ -158,7 +158,7 @@ button { font: inherit; color: inherit; }
   font-weight: 900; font-size: 15px; letter-spacing: .08em; color: var(--accent-dark);
 }
 .combo-text.bump { animation: combo-bump .38s cubic-bezier(.3, 1.6, .5, 1); }
-.combo-bar { width: 56px; height: 5px; border-radius: 99px; background: var(--panel); overflow: hidden; }
+.combo-bar { width: 72px; height: 5px; border-radius: 99px; background: var(--panel); overflow: hidden; }
 .combo-bar i { display: block; height: 100%; width: 100%; background: var(--accent); border-radius: inherit; transform-origin: left; }
 .combo-bar i.run { animation: combo-drain 3s linear forwards; }
 
@@ -240,7 +240,7 @@ button { font: inherit; color: inherit; }
 }
 .actions {
   width: var(--board);
-  display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
 }
 .btn {
   appearance: none;
@@ -292,6 +292,10 @@ button { font: inherit; color: inherit; }
 .modal-card p { margin: 0; color: var(--text-2-strong); font-size: 14px; }
 .modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
 
+.over-title { margin: 16px 0 2px !important; font-size: 30px !important; font-weight: 900; color: var(--text); letter-spacing: .06em; animation: over-in .45s cubic-bezier(.3, 1.5, .5, 1) backwards; }
+.over-reason { font-weight: 700; color: var(--invalid) !important; }
+.over-progress { min-height: 20px; margin-bottom: 4px !important; font-weight: 700; color: var(--text-2-strong) !important; }
+@keyframes over-in { from { transform: scale(.6); opacity: 0; } }
 .win-title { margin: 16px 0 4px !important; font-size: 34px !important; font-weight: 900; color: var(--accent-dark); letter-spacing: .04em; }
 .win-title span { display: inline-block; animation: letter-hop .6s cubic-bezier(.3, 1.6, .5, 1) backwards; }
 .win-title span:nth-child(2) { animation-delay: .05s; }
@@ -315,7 +319,7 @@ button { font: inherit; color: inherit; }
 @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
 @keyframes pop-up { 0% { opacity: 0; transform: translateY(6px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
 @keyframes combo-bump { 0% { transform: scale(.7); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
-@keyframes combo-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes combo-drain { 0% { transform: scaleX(1); background: var(--accent); } 60% { background: var(--accent); } 100% { transform: scaleX(0); background: var(--invalid); } }
 @keyframes selected-pulse { 0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 3px 8px rgba(169,127,85,.25); } 50% { box-shadow: 0 0 0 3px var(--accent), 0 3px 10px rgba(169,127,85,.35); } }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
 @keyframes remove { 0% { transform: scale(1.04); opacity: 1; } 100% { transform: scale(.4); opacity: 0; } }
@@ -361,3 +365,6 @@ button { font: inherit; color: inherit; }
   .tile.selected { animation: none; }
   .combo-bar i.run { animation-duration: 3s !important; } /* indikator waktu, bukan gerakan dekoratif */
 }
+
+/* Papan setelah game over: diredupkan, tidak bisa disentuh */
+.board.is-over .tile { filter: grayscale(.7); opacity: .55; pointer-events: none; transition: opacity .3s ease, filter .3s ease; }

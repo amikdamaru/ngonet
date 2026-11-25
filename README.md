@@ -2,9 +2,12 @@
 
 **Classic Tile Matching Game – Household Edition**
 
-Permainan Onet Classic bertema perabotan & perlengkapan rumah tangga. Papan 8×8 berisi 64 tile dari 48 gambar — sebagian gambar muncul 4× atau 6× sehingga pemain harus memilih pasangan dengan strategi (komposisi diatur di `js/config.js` → `TILE_GROUPS`). Papan awal & hasil Shuffle selalu bisa diselesaikan,
-tanpa timer, skor dengan combo progresif, Shuffle tanpa batas (penalti 50%), dan dapat di-install sebagai PWA yang
-berjalan offline. Tanpa backend, tanpa build step: HTML + CSS + JavaScript (ES modules).
+Permainan Onet Classic bertema perabotan & perlengkapan rumah tangga. Papan 8×8 berisi 64 tile dari 48 gambar — sebagian gambar muncul 4× atau 6× sehingga pemain harus memilih pasangan dengan strategi (komposisi diatur di `js/config.js` → `TILE_GROUPS`). Papan awal selalu bisa diselesaikan.
+
+**Aturan:** match pertama memulai timer combo; setiap match berikutnya harus dalam 3 detik (`COMBO_WINDOW_MS`).
+Combo putus atau papan buntu = **GAME OVER** — targetnya 32 match beruntun tanpa putus. Tidak ada Shuffle.
+**Restart** mengulang sesi dengan susunan tiles yang sama persis; **New Game** membuat susunan baru.
+Dapat di-install sebagai PWA yang berjalan offline. Tanpa backend, tanpa build step: HTML + CSS + JavaScript (ES modules).
 
 ## Menjalankan
 
@@ -41,8 +44,8 @@ sw.js                    Service Worker (precache + offline)
 css/style.css            desain (mobile-first, palet pastel, animasi, reduced-motion)
 js/config.js             konstanta aturan main
 js/pathfinder.js         pencarian jalur Onet (0-1 BFS, maks 2 belokan, virtual border)
-js/scoring.js            combo progresif & penalti shuffle
-js/game.js               state permainan murni (buat papan, match, shuffle, simpan/muat)
+js/scoring.js            combo progresif & batas waktu combo
+js/game.js               state permainan murni (buat papan, match, game over, restart, simpan/muat)
 js/generator.js          generator susunan papan yang dijamin bisa diselesaikan
 js/assets.js             preload gambar
 js/audio.js              musik latar (MP3) + sound effect sintesis Web Audio

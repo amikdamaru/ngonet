@@ -1,13 +1,13 @@
 // NGONET test suite (berjalan di browser; hasil ditulis ke DOM agar bisa dibaca headless Chrome).
 import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS, TILE_GROUPS, MAX_COPIES, allTileSources } from '../js/config.js';
 import {
-  createGame, tryMatch, shuffleBoard, pathBetween, remaining, isWon, hasAvailableMove,
+  createGame, restartGame, tryMatch, checkComboTimeout, pathBetween, remaining, isWon, hasAvailableMove,
   isEmptyFn, posOf, serialize, deserialize, shuffleInPlace,
 } from '../js/game.js';
 import { buildSolvableBoard, pairUp } from '../js/generator.js';
 import { BGM_SRC } from '../js/audio.js';
 import { findPath, validatePath } from '../js/pathfinder.js';
-import { scoreMatch, shufflePenalty } from '../js/scoring.js';
+import { scoreMatch } from '../js/scoring.js';
 
 const results = [];
 const $results = document.getElementById('results');
@@ -67,7 +67,7 @@ function makeState(rows) {
       (marks[ch] ||= []).push(r * COLS + c);
     });
   });
-  return { state: { rows: ROWS, cols: COLS, board, score: 0, combo: 0, lastMatchAt: null, matches: 0, shuffles: 0 }, marks };
+  return { state: { rows: ROWS, cols: COLS, board, score: 0, combo: 0, lastMatchAt: null, matches: 0, over: null }, marks };
 }
 const FULL = '########';
 
@@ -179,7 +179,7 @@ await test('Papan generator memberi pilihan: rata-rata ≥5 giliran bercabang pe
     const g = createGame(rng);
     while (remaining(g) > 0) {
       const av = allPairs(g);
-      if (!av.length) { shuffleBoard(g, rng); continue; }
+      if (!av.length) break; // buntu karena pilihan (tanpa Shuffle)
       const deg = new Map();
       for (const [i, j] of av) { deg.set(i, (deg.get(i) || 0) + 1); deg.set(j, (deg.get(j) || 0) + 1); }
       if ([...deg.values()].some((d) => d >= 2)) branches++;
@@ -221,9 +221,7 @@ await test('Teorema: bila semua gambar 2x, papan solvable tidak pernah buntu (20
   const ALL_TWO = [{ copies: 2, types: 32 }];
   for (let k = 0; k < 200; k++) {
     const g = createGame(rng, ALL_TWO);
-    // shuffle di tengah permainan juga harus menghasilkan susunan solvable
     for (let step = 0; remaining(g) > 0; step++) {
-      if (step === 8 && k % 2) shuffleBoard(g, rng);
       const av = allPairs(g);
       assert(av.length, `game ${k} buntu dengan ${remaining(g)} tile tersisa`);
       const [i, j] = av[Math.floor(rng() * av.length)];
@@ -342,58 +340,114 @@ await test('14. Combo reset jika jeda > 3 detik', () => {
   eq(scoreMatch(1, 0, 3000).points, 20, 'tepat 3000ms masih combo');
 });
 
-await test('Skor terintegrasi tryMatch memakai waktu matching sebelumnya', () => {
+await test('Skor terintegrasi tryMatch: 10 → 30 (tepat 3 dtk masih combo)', () => {
   const { state, marks } = makeState([FULL, FULL, 'AABBCCDD', FULL, FULL, FULL, FULL, FULL]);
   tryMatch(state, ...marks.A, 100); eq(state.score, 10, 'skor 1');
   tryMatch(state, ...marks.B, 3100); eq(state.score, 30, 'skor 2 (tepat 3 dtk)');
-  tryMatch(state, ...marks.C, 6200); eq(state.score, 40, 'skor 3 (3.1 dtk → reset)');
-  tryMatch(state, ...marks.D, 6300); eq(state.score, 60, 'skor 4');
+  eq(state.over, null, 'belum game over');
 });
 
-await test('15–16. Shuffle mengurangi skor 50% dengan Math.ceil', () => {
-  const table = [[100, 50], [101, 51], [250, 125], [999, 500], [1, 1], [0, 0], [10, 5], [15, 8]];
-  for (const [a, b] of table) eq(shufflePenalty(a), b, `penalti ${a}`);
+await test('GAME OVER: combo putus bila jeda > 3 detik; tile tidak hilang & input berikutnya ditolak', () => {
+  const { state, marks } = makeState([FULL, FULL, 'AABBCCDD', FULL, FULL, FULL, FULL, FULL]);
+  tryMatch(state, ...marks.A, 100);
+  tryMatch(state, ...marks.B, 2000);
+  const r = tryMatch(state, ...marks.C, 5001); // 3001 ms setelah match terakhir
+  assert(!r.ok && r.reason === 'combo-timeout', `harus combo-timeout, dapat ${r.reason}`);
+  eq(state.over, 'combo', 'state.over');
+  eq(state.score, 30, 'skor tidak bertambah');
+  eq(remaining(state), 64 - 4, 'tile C tidak hilang');
+  const r2 = tryMatch(state, ...marks.D, 5002);
+  assert(!r2.ok && r2.reason === 'over', 'setelah game over semua input ditolak');
 });
 
-await test('17. Skor tidak pernah negatif', () => {
-  let s = 37;
-  for (let k = 0; k < 20; k++) { s = shufflePenalty(s); assert(s >= 0, 'negatif'); }
-  eq(s, 1, 'skor 1 tetap 1 (ceil)');
-  eq(shufflePenalty(-5), 0, 'input negatif dipaksa 0');
+await test('Timer combo baru berjalan setelah match pertama; tepat 3000 ms belum putus', () => {
+  const { state, marks } = makeState([FULL, FULL, 'AABB####', FULL, FULL, FULL, FULL, FULL]);
+  eq(checkComboTimeout(state, 1e9), null, 'sebelum match pertama tidak ada batas waktu');
+  assert(tryMatch(state, ...marks.A, 1e9).ok, 'match pertama kapan saja');
+  eq(checkComboTimeout(state, 1e9 + 3000), null, 'tepat 3000 ms');
+  eq(checkComboTimeout(state, 1e9 + 3001), 'combo', '3001 ms → putus');
 });
 
-// ============================================================ SHUFFLE & RESTART (logika)
-await test('18–20. Shuffle: jumlah tile, jenis, pasangan tetap; tile hilang tidak kembali', () => {
-  const rng = mulberry32(7);
-  const g = createGame(rng);
-  // hilangkan 10 pasangan langsung
-  const removedIds = new Set();
-  const byType = new Map();
-  g.board.forEach((t, i) => { (byType.get(t.type) || byType.set(t.type, []).get(t.type)).push(i); });
-  [...byType.values()].slice(0, 10).forEach(([i, j]) => { removedIds.add(g.board[i].id); removedIds.add(g.board[j].id); g.board[i] = null; g.board[j] = null; });
-  g.score = 101; g.combo = 3; g.lastMatchAt = 5;
-  const emptyBefore = g.board.map((t) => t === null).join();
-  const typesBefore = g.board.filter(Boolean).map((t) => t.type).sort((a, b) => a - b).join();
-  for (let k = 0; k < 25; k++) {
-    shuffleBoard(g, rng);
-    eq(remaining(g), 44, 'jumlah tile');
-    eq(g.board.filter(Boolean).map((t) => t.type).sort((a, b) => a - b).join(), typesBefore, 'multiset jenis');
-    eq(g.board.map((t) => t === null).join(), emptyBefore, 'posisi kosong tetap kosong');
-    assert(g.board.every((t) => !t || !removedIds.has(t.id)), 'tile yang hilang muncul kembali');
+await test('GAME OVER: papan buntu (tidak ada pasangan yang bisa dihubungkan)', () => {
+  const { state, marks } = makeState(['AA######', FULL, FULL, FULL, FULL, FULL, FULL, FULL]);
+  const r = tryMatch(state, ...marks.A, 0);
+  assert(r.ok, 'match terakhir tetap berhasil');
+  eq(state.over, 'stuck', 'state.over');
+});
+
+/** Cari urutan penyelesaian lengkap (DFS + memo) — untuk mensimulasikan pemain sempurna. */
+function solve(st) {
+  const seen = new Set();
+  const sim = { rows: ROWS, cols: COLS, board: st.board.slice() };
+  const path = [];
+  const dfs = () => {
+    if (remaining(sim) === 0) return true;
+    const key = sim.board.map((t) => (t ? 1 : 0)).join('');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    for (const [i, j] of allPairs(sim)) {
+      const a = sim.board[i], b = sim.board[j];
+      sim.board[i] = null; sim.board[j] = null; path.push([i, j]);
+      if (dfs()) return true;
+      sim.board[i] = a; sim.board[j] = b; path.pop();
+    }
+    return false;
+  };
+  return dfs() ? path : null;
+}
+
+await test('Menang: 32 match beruntun tanpa putus → skor 5280', () => {
+  for (let k = 0; k < 10; k++) {
+    const g = createGame(mulberry32(300 + k));
+    const seq = solve(g);
+    assert(seq, `papan ${k} tidak bisa diselesaikan`);
+    seq.forEach(([i, j], n) => assert(tryMatch(g, i, j, 1000 + n * 2500).ok, `match ke-${n + 1}`));
+    assert(isWon(g), 'harus menang');
+    eq(g.over, null, 'bukan game over');
+    eq(g.score, 5280, 'skor kemenangan = 10×(1+…+32)');
   }
-  eq(g.combo, 0, 'combo direset');
-  eq(g.lastMatchAt, null, 'patokan combo direset');
 });
 
-await test('Serialisasi simpan/muat permainan konsisten & menolak data rusak', () => {
+await test('Restart: susunan awal identik, skor/combo/progres kembali 0', () => {
+  const g = createGame(mulberry32(8));
+  const sig = (b) => b.map((t) => t && `${t.id}:${t.type}`).join();
+  const initialSig = sig(g.initial);
+  eq(sig(g.board), initialSig, 'papan awal = initial');
+  const seq = solve(g);
+  for (let n = 0; n < 5; n++) tryMatch(g, ...seq[n], n * 100);
+  tryMatch(g, ...seq[5], 99999); // combo putus → game over
+  eq(g.over, 'combo', 'game over');
+  const r1 = restartGame(g);
+  eq(sig(r1.board), initialSig, 'restart pertama: susunan sama');
+  eq(r1.score, 0, 'skor'); eq(r1.combo, 0, 'combo'); eq(r1.matches, 0, 'matches');
+  eq(r1.over, null, 'over'); eq(r1.lastMatchAt, null, 'timer');
+  tryMatch(r1, ...seq[0], 0);
+  const r2 = restartGame(r1);
+  eq(sig(r2.board), initialSig, 'restart kedua: tetap susunan yang sama');
+  eq(remaining(r2), 64, '64 tile');
+});
+
+await test('New Game: susunan tiles baru', () => {
+  const a = createGame(), b = createGame();
+  assert(a.initial.map((t) => t.type).join() !== b.initial.map((t) => t.type).join(), 'susunan identik');
+});
+
+await test('Simpan/muat: susunan awal & sisa tile utuh; ditutup saat combo berjalan → game over; data rusak ditolak', () => {
   const g = createGame(mulberry32(3));
-  g.board[0] = null; g.board[g.board.findIndex((t, i) => i > 0 && t && t.type === createGame(mulberry32(3)).board[0].type)] = null;
-  g.score = 77;
-  const back = deserialize(serialize(g));
+  // belum ada match → bisa dilanjutkan
+  let back = deserialize(serialize(g));
+  assert(back && back.over === null && remaining(back) === 64, 'sesi tanpa progres dilanjutkan');
+  const seq = solve(g);
+  tryMatch(g, ...seq[0], 0); tryMatch(g, ...seq[1], 100);
+  back = deserialize(serialize(g));
   assert(back, 'harus bisa dimuat');
-  eq(back.score, 77, 'skor');
-  eq(back.board.map((t) => t && t.type).join(), g.board.map((t) => t && t.type).join(), 'papan');
-  const bad = JSON.parse(serialize(g)); bad.board[5] = null;
+  eq(back.score, 30, 'skor');
+  eq(back.board.map((t) => t && t.id).join(), g.board.map((t) => t && t.id).join(), 'sisa tile');
+  eq(back.initial.map((t) => t.id).join(), g.initial.map((t) => t.id).join(), 'susunan awal');
+  eq(back.over, 'combo', 'combo berjalan saat ditutup → game over');
+  eq(restartGame(back).board.map((t) => t.id).join(), g.initial.map((t) => t.id).join(), 'restart setelah muat');
+  const bad = JSON.parse(serialize(g));
+  bad.alive = bad.alive.replace('1', '0'); // satu tile hilang tanpa pasangannya
   eq(deserialize(JSON.stringify(bad)), null, 'data rusak (jenis ganjil) ditolak');
 });
 
@@ -425,7 +479,7 @@ function findDifferent(st) {
 }
 const tileEl = (doc, st, i) => doc.querySelector(`.tile[data-id="${st.board[i].id}"]`);
 
-try { localStorage.removeItem('ngonet:game:v1'); } catch { /* */ }
+try { localStorage.removeItem('ngonet:game:v2'); } catch { /* */ }
 const frame = makeFrame(390, 844);
 let app;
 await test('Aplikasi termuat & seluruh 48 aset gambar berhasil dimuat', async () => {
@@ -471,34 +525,42 @@ await test('Interaksi: jenis sama tetapi tanpa jalur valid → tidak hilang', as
   await sleep(400);
 });
 
-/** Apakah greedy bisa melakukan n matching berturut-turut dari papan ini (simulasi pada salinan). */
-function canChain(st, n) {
-  const sim = { ...st, board: st.board.slice() };
-  for (let k = 0; k < n; k++) {
-    const pr = findPair(sim);
-    if (!pr) return false;
-    sim.board[pr[0]] = null; sim.board[pr[1]] = null;
+const $id = (id) => app.doc.getElementById(id);
+const boardSig = (b) => b.map((t) => t && `${t.id}:${t.type}`).join();
+/** Klik New Game dari kondisi apa pun (konfirmasi / modal game over / modal menang). */
+async function clickNewGame() {
+  if (!$id('overModal').hidden) $id('overNewGameBtn').click();
+  else if (!$id('winModal').hidden) $id('winNewGameBtn').click();
+  else {
+    $id('newGameBtn').click();
+    if (!$id('confirmModal').hidden) $id('confirmYes').click();
   }
-  return true;
+  await sleep(450);
+}
+/** Mainkan n langkah dari urutan solusi dengan jeda singkat (< 3 dtk). */
+async function playMoves(seq, n, gap = 40) {
+  for (let k = 0; k < n; k++) {
+    tileEl(app.doc, S(), seq[k][0]).click(); tileEl(app.doc, S(), seq[k][1]).click();
+    await sleep(gap);
+  }
 }
 
+await test('Tidak ada tombol Shuffle; tersedia Restart & New Game', async () => {
+  eq($id('shuffleBtn'), null, 'tombol Shuffle harus hilang');
+  assert($id('restartBtn') && $id('newGameBtn'), 'tombol Restart & New Game');
+});
+
 await test('E2E skor & combo: 10 → 30 → 60, indikator COMBO x2/x3, garis tampil', async () => {
-  // butuh papan yang memungkinkan 3 matching beruntun; restart (skor 0) sampai dapat
-  for (let t = 0; t < 30 && !canChain(S(), 3); t++) {
-    app.doc.getElementById('restartBtn').click();
-    app.doc.getElementById('confirmYes').click();
-  }
-  assert(canChain(S(), 3), 'tidak menemukan papan untuk test combo');
-  await sleep(450);
+  await clickNewGame();
+  const seq = solve(S());
+  assert(seq, 'papan harus bisa diselesaikan');
   const expect = [10, 30, 60];
   for (let k = 0; k < 3; k++) {
-    let pr = findPair(S());
-    if (!pr) throw new Error('tidak ada pasangan tersedia untuk test');
-    const ids = [S().board[pr[0]].id, S().board[pr[1]].id];
-    tileEl(app.doc, S(), pr[0]).click(); tileEl(app.doc, S(), pr[1]).click();
+    const ids = [S().board[seq[k][0]].id, S().board[seq[k][1]].id];
+    tileEl(app.doc, S(), seq[k][0]).click(); tileEl(app.doc, S(), seq[k][1]).click();
     eq(scoreText(), expect[k], `skor setelah matching ke-${k + 1}`);
     assert(app.doc.querySelector('#links polyline'), 'garis penghubung harus digambar');
-    if (k >= 1) eq(app.doc.getElementById('comboText').textContent, `COMBO x${k + 1}`, 'teks combo');
+    eq($id('comboText').textContent, `COMBO x${k + 1}`, 'teks combo');
     // double tap pada tile yang sudah dihapus tidak berpengaruh
     const ghost = app.doc.querySelector(`.tile[data-id="${ids[0]}"]`);
     if (ghost) { ghost.click(); ghost.click(); }
@@ -510,76 +572,81 @@ await test('E2E skor & combo: 10 → 30 → 60, indikator COMBO x2/x3, garis tam
   eq(app.doc.querySelectorAll('.tile').length, 58, 'elemen DOM terhapus tepat sekali');
 });
 
-await test('E2E combo reset setelah jeda > 3 detik', async () => {
-  await sleep(3200);
-  const before = scoreText();
-  let pr = findPair(S());
-  for (let t = 0; !pr && t < 20; t++) { app.doc.getElementById('shuffleBtn').click(); await sleep(450); pr = findPair(S()); }
-  assert(pr, 'tidak ada pasangan setelah 20x shuffle');
-  await sleep(3200); // shuffle mereset combo; tetap pastikan jeda > 3 dtk dari matching terakhir
-  const base = scoreText();
-  tileEl(app.doc, S(), pr[0]).click(); tileEl(app.doc, S(), pr[1]).click();
-  eq(scoreText() - base, 10, 'poin harus kembali 10');
-  return `skor ${before} → ${scoreText()}`;
-});
-
-await test('E2E Shuffle: skor ceil 50%, tile & jenis tetap, combo hilang', async () => {
-  await sleep(700);
+await test('E2E GAME OVER: jeda > 3 detik → modal Game Over dengan Restart & New Game', async () => {
   const st = S();
-  const before = scoreText();
-  const types = st.board.filter(Boolean).map((t) => t.type).sort((a, b) => a - b).join();
-  const n = remaining(st);
-  app.doc.getElementById('shuffleBtn').click();
-  eq(scoreText(), Math.ceil(before * 0.5), 'skor setelah shuffle');
-  eq(remaining(st), n, 'jumlah tile');
-  eq(st.board.filter(Boolean).map((t) => t.type).sort((a, b) => a - b).join(), types, 'jenis tile');
-  assert(!app.doc.getElementById('combo').classList.contains('active'), 'combo disembunyikan');
-  await sleep(450);
-  eq(app.doc.querySelectorAll('.tile').length, n, 'elemen DOM sama');
-  // posisi DOM sesuai state
-  const ok = st.board.every((t, i) => !t || Number(app.doc.querySelector(`.tile[data-id="${t.id}"]`).dataset.index) === i);
-  assert(ok, 'posisi DOM tidak sinkron dengan state');
-  return `${before} → ${scoreText()}`;
+  await waitFor(() => !$id('overModal').hidden, 4500);
+  eq(st.over, 'combo', 'state.over');
+  assert(/Combo terputus/.test($id('overReason').textContent), 'alasan combo putus');
+  eq(Number($id('overScore').textContent), 60, 'skor game over');
+  assert(/3\/32/.test($id('overProgress').textContent), 'progres 3/32');
+  eq($id('overRestartBtn').textContent.trim(), 'Restart', 'tombol Restart');
+  eq($id('overNewGameBtn').textContent.trim(), 'New Game', 'tombol New Game');
+  // papan terkunci
+  const i = st.board.findIndex(Boolean);
+  tileEl(app.doc, st, i).click();
+  eq(app.win.__ngonet.selected, null, 'tile tidak bisa dipilih setelah game over');
 });
 
-await test('21–22. Restart: batal tidak mengubah apa pun; setuju → skor 0 & papan baru', async () => {
-  const st = S(); const score = scoreText(); const sig = st.board.map((t) => t && t.id + ':' + t.type).join();
-  app.doc.getElementById('restartBtn').click();
-  assert(!app.doc.getElementById('confirmModal').hidden, 'dialog konfirmasi tampil');
-  app.doc.getElementById('confirmNo').click();
-  assert(app.doc.getElementById('confirmModal').hidden, 'dialog tertutup');
-  assert(S() === st && scoreText() === score && st.board.map((t) => t && t.id + ':' + t.type).join() === sig, 'permainan berubah setelah batal');
-  app.doc.getElementById('restartBtn').click();
-  app.doc.getElementById('confirmYes').click();
-  assert(S() !== st, 'state baru');
+await test('E2E Restart dari Game Over: susunan tiles sama persis, skor 0', async () => {
+  const initialSig = boardSig(S().initial);
+  $id('overRestartBtn').click();
+  assert($id('overModal').hidden, 'modal tertutup');
+  eq(boardSig(S().board), initialSig, 'papan = susunan awal sesi');
   eq(scoreText(), 0, 'skor');
-  eq(remaining(S()), 64, 'tile');
-  eq(app.doc.querySelectorAll('.tile').length, 64, 'elemen tile');
-  assert(S().board.map((t) => t.type).join() !== st.board.map((t) => t && t.type).join(), 'papan harus baru');
-  eq(app.doc.getElementById('pairs').textContent, '32', 'pairs left');
+  eq(app.doc.querySelectorAll('.tile').length, 64, '64 tile tampil');
+  eq(S().over, null, 'tidak over');
+  await sleep(450);
+});
+
+await test('E2E Restart saat bermain: konfirmasi; Batal tidak mengubah; Restart → susunan sama', async () => {
+  const seq = solve(S());
+  await playMoves(seq, 2);
+  const st = S(); const sig = boardSig(st.board); const score = scoreText();
+  $id('restartBtn').click();
+  assert(!$id('confirmModal').hidden, 'dialog konfirmasi tampil');
+  eq($id('confirmYes').textContent, 'Restart', 'label tombol');
+  $id('confirmNo').click();
+  assert($id('confirmModal').hidden && S() === st && boardSig(st.board) === sig && scoreText() === score, 'batal tidak mengubah');
+  $id('restartBtn').click();
+  $id('confirmYes').click();
+  eq(boardSig(S().board), boardSig(st.initial), 'susunan awal yang sama');
+  eq(scoreText(), 0, 'skor 0');
+  await sleep(450);
+});
+
+await test('E2E New Game: konfirmasi saat bermain → susunan tiles baru', async () => {
+  const seq = solve(S());
+  await playMoves(seq, 1);
+  const oldInitial = boardSig(S().initial);
+  $id('newGameBtn').click();
+  assert(!$id('confirmModal').hidden, 'dialog konfirmasi tampil');
+  eq($id('confirmYes').textContent, 'New Game', 'label tombol');
+  $id('confirmYes').click();
+  assert(boardSig(S().initial) !== oldInitial, 'susunan harus baru');
+  eq(scoreText(), 0, 'skor 0');
+  eq(remaining(S()), 64, '64 tile');
+  eq($id('pairs').textContent, '32', 'pairs left');
   await sleep(450);
 });
 
 await test('Audio SFX: pilih tile → select, match gagal → fail, match berhasil → match', async () => {
   const A = app.win.__ngonet.audio;
   assert(A.settings.sfx, 'efek suara harus aktif secara default');
+  await clickNewGame();
   const last = () => A.history[A.history.length - 1];
-  const n0 = A.history.length;
-  let pr = findPair(S());
-  for (let t = 0; !pr && t < 20; t++) { app.doc.getElementById('shuffleBtn').click(); await sleep(450); pr = findPair(S()); }
   const diff = findDifferent(S());
   tileEl(app.doc, S(), diff[0]).click();
   eq(last(), 'select', 'tap tile pertama');
   tileEl(app.doc, S(), diff[1]).click();
   eq(last(), 'fail', 'pasangan beda gambar');
   await sleep(400);
-  pr = findPair(S());
+  const pr = findPair(S());
   tileEl(app.doc, S(), pr[0]).click();
   eq(last(), 'select', 'tap tile pertama (lagi)');
   tileEl(app.doc, S(), pr[1]).click();
   eq(last(), 'match', 'match berhasil');
-  eq(A.history.slice(n0 - A.history.length).join(), 'select,fail,select,match', 'urutan sfx');
-  await sleep(700);
+  eq(A.history.slice(-4).join(), 'select,fail,select,match', 'urutan sfx');
+  await clickNewGame(); // hindari game over di tengah test berikutnya
 });
 
 await test('Audio toggle: efek suara & musik bisa dimatikan, tersimpan, dan benar-benar membisukan', async () => {
@@ -617,31 +684,30 @@ await test('BGM: file termuat, loop, dan diputar setelah interaksi', async () =>
   return `durasi ${el.duration.toFixed(1)} dtk, volume ${el.volume.toFixed(2)}`;
 });
 
-await test('23–25. Mainkan sampai habis → YOU WIN!, skor akhir benar, PLAY AGAIN', async () => {
-  let shuffles = 0, matches = 0;
-  const expectedMatches = remaining(S()) / 2;
-  for (let guard = 0; guard < 400 && remaining(S()) > 0; guard++) {
-    const pr = findPair(S());
-    if (!pr) { app.doc.getElementById('shuffleBtn').click(); shuffles++; await sleep(450); continue; }
-    tileEl(app.doc, S(), pr[0]).click(); tileEl(app.doc, S(), pr[1]).click();
-    matches++;
-    await sleep(40);
-  }
+await test('23–25. Mainkan 32 match beruntun → YOU WIN!, skor 5280, tombol New Game', async () => {
+  await clickNewGame();
+  const seq = solve(S());
+  assert(seq, 'papan harus bisa diselesaikan');
+  await playMoves(seq, seq.length, 60);
   eq(remaining(S()), 0, 'semua tile harus habis');
-  eq(matches, expectedMatches, 'jumlah matching = sisa pasangan');
-  const modal = app.doc.getElementById('winModal');
+  eq(S().over, null, 'tidak game over');
+  const modal = $id('winModal');
   await waitFor(() => !modal.hidden, 3000);
-  assert(/YOU\s*WIN!/.test(app.doc.getElementById('winTitle').getAttribute('aria-label')), 'teks YOU WIN!');
+  assert($id('overModal').hidden, 'modal game over tidak boleh muncul');
+  assert(/YOU\s*WIN!/.test($id('winTitle').getAttribute('aria-label')), 'teks YOU WIN!');
   assert(modal.querySelector('.logo'), 'nama NGONET tampil');
-  eq(Number(app.doc.getElementById('winScore').textContent), S().score, 'skor akhir = skor state');
-  eq(Number(app.doc.getElementById('winScore').textContent), scoreText(), 'skor akhir = skor tampil');
-  eq(app.doc.getElementById('playAgainBtn').textContent.trim(), 'PLAY AGAIN', 'tombol');
-  const final = S().score;
-  app.doc.getElementById('playAgainBtn').click();
+  eq(Number($id('winScore').textContent), 5280, 'skor akhir');
+  eq(Number($id('winScore').textContent), scoreText(), 'skor akhir = skor tampil');
+  eq($id('winNewGameBtn').textContent.trim(), 'New Game', 'tombol New Game');
+  const oldInitial = boardSig(S().initial);
+  await sleep(3300);
+  assert($id('overModal').hidden, 'timer combo tidak boleh memicu game over setelah menang');
+  $id('winNewGameBtn').click();
   assert(modal.hidden, 'modal tertutup');
   eq(scoreText(), 0, 'skor baru 0');
   eq(remaining(S()), 64, 'papan baru 64 tile');
-  return `skor akhir ${final} (${shuffles} shuffle)`;
+  assert(boardSig(S().initial) !== oldInitial, 'susunan baru');
+  return `skor akhir 5280`;
 });
 
 // ============================================================ UI / layout
@@ -654,7 +720,7 @@ async function layoutCheck(w, h) {
   const tile = doc.querySelector('.tile').getBoundingClientRect();
   assert(board.left >= 0 && board.right <= w, 'papan keluar layar');
   assert(Math.abs(tile.width - tile.height) < 1, 'tile tidak persegi');
-  const btn = doc.getElementById('shuffleBtn').getBoundingClientRect();
+  const btn = doc.getElementById('newGameBtn').getBoundingClientRect();
   const bg = win.getComputedStyle(doc.body).backgroundColor;
   return { tile: tile.width, board: board.width, btnBottom: btn.bottom, btnH: btn.height, bg, docH: se.scrollHeight };
 }

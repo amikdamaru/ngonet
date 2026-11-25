@@ -28,8 +28,8 @@ export function validateGroups(groups) {
 validateGroups(TILE_GROUPS);
 export const MAX_TURNS = 2;                // aturan Onet Classic
 export const BASE_POINTS = 10;
-export const COMBO_WINDOW_MS = 3000;       // jeda maksimal antar-matching agar combo naik
-export const SHUFFLE_FACTOR = 0.5;         // penalti shuffle: skor * 0.5 (dibulatkan ke atas)
+// Jeda maksimal antar-matching. Timer mulai SETELAH match pertama; jika terlewati → combo putus = GAME OVER.
+export const COMBO_WINDOW_MS = 3000;
 
 export const TILE_PATH = 'public/assets/onet/tiles/';
 

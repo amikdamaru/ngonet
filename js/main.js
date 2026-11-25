@@ -1,13 +1,13 @@
 // Controller UI NGONET: menghubungkan state permainan (game.js) dengan DOM.
 import { COLS, ROWS, PAIRS, COMBO_WINDOW_MS, tileSrc, allTileSources } from './config.js';
 import {
-  createGame, tryMatch, shuffleBoard, remaining, isWon, hasAvailableMove,
+  createGame, restartGame, tryMatch, checkComboTimeout, remaining, isWon,
   posOf, serialize, deserialize,
 } from './game.js';
 import { preloadImages } from './assets.js';
 import { createAudio } from './audio.js';
 
-const STORAGE_KEY = 'ngonet:game:v1';
+const STORAGE_KEY = 'ngonet:game:v2';
 const BEST_KEY = 'ngonet:best';
 
 const $ = (id) => document.getElementById(id);
@@ -16,9 +16,12 @@ const els = {
   app: $('app'), board: $('board'), boardWrap: $('boardWrap'), links: $('links'),
   score: $('score'), scorePop: $('scorePop'), pairs: $('pairs'), best: $('best'),
   combo: $('combo'), comboText: $('comboText'), comboBar: $('comboBar'),
-  notice: $('notice'), shuffleBtn: $('shuffleBtn'), restartBtn: $('restartBtn'),
-  confirmModal: $('confirmModal'), confirmYes: $('confirmYes'), confirmNo: $('confirmNo'),
-  winModal: $('winModal'), winScore: $('winScore'), winBest: $('winBest'), playAgainBtn: $('playAgainBtn'), confetti: $('confetti'),
+  notice: $('notice'), restartBtn: $('restartBtn'), newGameBtn: $('newGameBtn'),
+  confirmModal: $('confirmModal'), confirmTitle: $('confirmTitle'), confirmText: $('confirmText'),
+  confirmYes: $('confirmYes'), confirmNo: $('confirmNo'),
+  overModal: $('overModal'), overReason: $('overReason'), overScore: $('overScore'), overProgress: $('overProgress'),
+  overRestartBtn: $('overRestartBtn'), overNewGameBtn: $('overNewGameBtn'),
+  winModal: $('winModal'), winScore: $('winScore'), winBest: $('winBest'), winNewGameBtn: $('winNewGameBtn'), confetti: $('confetti'),
   musicBtn: $('musicBtn'), sfxBtn: $('sfxBtn'),
 };
 
@@ -32,14 +35,15 @@ const T = {
   get link() { return reduced() ? 160 : 300; },
   get remove() { return reduced() ? 0 : 260; },
   get invalid() { return reduced() ? 220 : 340; },
-  get shuffle() { return reduced() ? 0 : 380; },
 };
+
+const START_HINT = `Setelah match pertama: maks ${COMBO_WINDOW_MS / 1000} detik per match!`;
 
 let state = null;
 let selected = null;           // indeks papan tile yang sedang dipilih
-let gen = 0;                   // generasi permainan: callback lama diabaikan setelah restart
-let shuffling = false;         // kunci input singkat selama animasi shuffle
-let comboTimer = 0;
+let gen = 0;                   // generasi sesi: callback lama diabaikan setelah restart/new game
+let comboTimer = 0;            // timer batas waktu combo (game over)
+let pendingConfirm = null;     // aksi yang menunggu konfirmasi
 const tileEls = new Map();     // tile.id -> elemen
 
 // ---------------------------------------------------------------- storage
@@ -49,6 +53,11 @@ const store = {
   del(key) { try { window.localStorage.removeItem(key); } catch { /* abaikan */ } },
 };
 const getBest = () => Math.max(0, parseInt(store.get(BEST_KEY) || '0', 10) || 0);
+/** Simpan skor terbaik; mengembalikan true bila rekor baru. */
+function recordBest(score) {
+  if (score > getBest()) { store.set(BEST_KEY, String(score)); return true; }
+  return false;
+}
 function save() {
   if (!state) return;
   if (isWon(state)) store.del(STORAGE_KEY); else store.set(STORAGE_KEY, serialize(state));
@@ -69,6 +78,7 @@ const later = (fn, ms) => {
   const g = gen;
   return window.setTimeout(() => { if (g === gen) fn(); }, ms);
 };
+const inProgress = () => state && state.matches > 0 && !state.over && !isWon(state);
 
 // ---------------------------------------------------------------- render
 function createTileEl(tile) {
@@ -96,6 +106,7 @@ function placeTile(el, index) {
 function renderBoard(animateIn) {
   els.board.textContent = '';
   els.links.textContent = '';
+  els.board.classList.toggle('is-over', !!state.over);
   tileEls.clear();
   const frag = document.createDocumentFragment();
   state.board.forEach((tile, i) => {
@@ -120,39 +131,26 @@ function updateStats() {
   els.best.textContent = String(getBest());
 }
 
-function popScore(text, minus) {
+function popScore(text) {
   els.scorePop.textContent = text;
-  els.scorePop.classList.toggle('minus', !!minus);
   restartAnim(els.scorePop, 'show');
   restartAnim(els.score, 'bump');
 }
 
+/** Indikator combo sekaligus timer: bar habis dalam COMBO_WINDOW_MS. */
 function showCombo(combo) {
-  window.clearTimeout(comboTimer);
-  if (combo < 2) { hideCombo(); return; }
   els.comboText.textContent = `COMBO x${combo}`;
   els.combo.classList.add('active');
+  els.comboBar.style.animationDuration = `${COMBO_WINDOW_MS}ms`;
   restartAnim(els.comboText, 'bump');
   restartAnim(els.comboBar, 'run');
-  comboTimer = window.setTimeout(hideCombo, COMBO_WINDOW_MS);
 }
 function hideCombo() {
-  window.clearTimeout(comboTimer);
   els.combo.classList.remove('active');
   els.comboBar.classList.remove('run');
 }
 
-function setNotice(text) {
-  els.notice.textContent = text || '';
-  els.shuffleBtn.classList.toggle('attention', !!text);
-}
-function checkDeadlock() {
-  if (remaining(state) > 0 && !hasAvailableMove(state)) {
-    setNotice('Tidak ada pasangan yang bisa dihubungkan. Tekan Shuffle.');
-  } else {
-    setNotice('');
-  }
-}
+function setNotice(text) { els.notice.textContent = text || ''; }
 
 // ---------------------------------------------------------------- garis penghubung
 function boardMetrics() {
@@ -221,7 +219,9 @@ function deselect() {
 }
 
 function onTileActivate(index, id) {
-  if (shuffling || !state) return;
+  if (!state || state.over || isWon(state)) return;
+  // Combo bisa saja sudah putus sebelum timer sempat berjalan (mis. tab di-throttle).
+  if (checkComboTimeout(state, performance.now())) { gameOver(); return; }
   const tile = state.board[index];
   if (!tile || tile.id !== id) return; // tile sudah hilang / elemen basi
 
@@ -238,6 +238,7 @@ function attemptMatch(i, j) {
   selected = null;
 
   if (!res.ok) {
+    if (res.reason === 'combo-timeout' || res.reason === 'over') { deselectEls(elA, elB); gameOver(); return; }
     audio.sfx.fail();
     for (const el of [elA, elB]) {
       if (!el) continue;
@@ -267,91 +268,59 @@ function attemptMatch(i, j) {
 
   updateStats();
   popScore(`+${res.points}`);
-  showCombo(res.combo);
+  setNotice('');
   save();
 
+  window.clearTimeout(comboTimer);
   if (isWon(state)) {
     hideCombo();
-    setNotice('');
     later(showWin, T.link + T.remove + 150);
+  } else if (state.over) {
+    // Tidak ada pasangan yang bisa dihubungkan lagi.
+    hideCombo();
+    later(gameOver, T.link + T.remove + 150);
   } else {
-    checkDeadlock();
+    showCombo(res.combo);
+    comboTimer = later(onComboTimer, COMBO_WINDOW_MS + 25);
   }
 }
 
-// ---------------------------------------------------------------- shuffle
-function onShuffle() {
-  if (shuffling || !state || remaining(state) === 0) return;
+function deselectEls(...list) { for (const el of list) el?.classList.remove('selected'); }
+
+function onComboTimer() {
+  if (checkComboTimeout(state, performance.now())) gameOver();
+  else if (state.lastMatchAt !== null && !state.over) {
+    // timer berjalan lebih cepat dari jam (jarang): periksa lagi saat jendela benar-benar habis
+    comboTimer = later(onComboTimer, Math.max(10, state.lastMatchAt + COMBO_WINDOW_MS + 25 - performance.now()));
+  }
+}
+
+// ---------------------------------------------------------------- game over / menang
+function gameOver() {
+  if (!state.over) return;
+  window.clearTimeout(comboTimer);
   deselect();
-  const before = state.score;
-
-  // FLIP: catat posisi awal
-  const first = new Map();
-  if (!reduced()) {
-    state.board.forEach((t) => { if (t) first.set(t.id, tileEls.get(t.id).getBoundingClientRect()); });
-  }
-
-  shuffleBoard(state);
-  state.board.forEach((t, i) => { if (t) placeTile(tileEls.get(t.id), i); });
-
-  if (!reduced()) {
-    const moved = [];
-    state.board.forEach((t) => {
-      if (!t) return;
-      const el = tileEls.get(t.id);
-      const a = first.get(t.id);
-      const b = el.getBoundingClientRect();
-      const dx = a.left - b.left;
-      const dy = a.top - b.top;
-      if (!dx && !dy) return;
-      el.style.transition = 'none';
-      el.style.transform = `translate(${dx}px, ${dy}px)`;
-      moved.push(el);
-    });
-    void els.board.offsetWidth;
-    for (const el of moved) {
-      el.style.transition = `transform ${T.shuffle}ms cubic-bezier(.35,.9,.3,1)`;
-      el.style.transform = '';
-    }
-    shuffling = true;
-    window.setTimeout(() => {
-      for (const el of moved) el.style.transition = '';
-      shuffling = false;
-    }, T.shuffle + 20);
-  }
-
   hideCombo();
-  updateStats();
-  if (before > 0) popScore(`−${before - state.score}`, true);
+  els.board.classList.add('is-over');
+  audio.sfx.fail();
+  const best = getBest();
+  const isBest = recordBest(state.score);
   save();
-  checkDeadlock();
-}
-
-// ---------------------------------------------------------------- restart & victory
-function newGame() {
-  gen++;
-  shuffling = false;
-  selected = null;
-  state = createGame();
-  hideCombo();
-  setNotice('');
-  renderBoard(true);
   updateStats();
-  save();
-  checkDeadlock();
+  els.overReason.textContent = state.over === 'stuck'
+    ? 'Tidak ada pasangan yang bisa dihubungkan'
+    : `Combo terputus — lebih dari ${COMBO_WINDOW_MS / 1000} detik tanpa match`;
+  els.overScore.textContent = String(state.score);
+  els.overProgress.textContent = `${state.matches}/${PAIRS} pasangan`
+    + (isBest && state.score > 0 ? ' · Rekor baru!' : ` · Best: ${Math.max(best, state.score)}`);
+  closeModal(els.confirmModal);
+  openModal(els.overModal, els.overRestartBtn);
 }
-
-function openModal(modal, focusEl) {
-  modal.hidden = false;
-  focusEl?.focus({ preventScroll: true });
-}
-function closeModal(modal) { modal.hidden = true; }
 
 function showWin() {
   const final = state.score;
   const prevBest = getBest();
-  const isBest = final > prevBest;
-  if (isBest) store.set(BEST_KEY, String(final));
+  const isBest = recordBest(final);
   store.del(STORAGE_KEY);
   els.winScore.textContent = String(final);
   els.winBest.textContent = isBest && final > 0 ? 'Rekor baru!' : `Best: ${Math.max(prevBest, final)}`;
@@ -373,8 +342,43 @@ function showWin() {
       els.confetti.appendChild(i);
     }
   }
-  openModal(els.winModal, els.playAgainBtn);
+  closeModal(els.confirmModal);
+  openModal(els.winModal, els.winNewGameBtn);
 }
+
+// ---------------------------------------------------------------- sesi: restart & new game
+/** Mulai sesi dari state yang diberikan (papan baru atau susunan awal yang sama). */
+function startSession(next) {
+  gen++;
+  window.clearTimeout(comboTimer);
+  selected = null;
+  state = next;
+  for (const m of [els.confirmModal, els.overModal, els.winModal]) closeModal(m);
+  els.confetti.textContent = '';
+  hideCombo();
+  setNotice(START_HINT);
+  renderBoard(true);
+  updateStats();
+  save();
+}
+const doRestart = () => startSession(restartGame(state));
+const doNewGame = () => startSession(createGame());
+
+/** Minta konfirmasi bila ada progres yang akan hilang, lalu jalankan aksi. */
+function confirmThen(action, { title, text, yes }) {
+  if (!inProgress()) { action(); return; }
+  pendingConfirm = action;
+  els.confirmTitle.textContent = title;
+  els.confirmText.textContent = text;
+  els.confirmYes.textContent = yes;
+  openModal(els.confirmModal, els.confirmNo);
+}
+
+function openModal(modal, focusEl) {
+  modal.hidden = false;
+  focusEl?.focus({ preventScroll: true });
+}
+function closeModal(modal) { modal.hidden = true; }
 
 // ---------------------------------------------------------------- event binding
 function bindEvents() {
@@ -385,7 +389,6 @@ function bindEvents() {
   });
   els.board.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  els.shuffleBtn.addEventListener('click', onShuffle);
   els.musicBtn.addEventListener('click', () => audio.setMusic(!audio.settings.music));
   els.sfxBtn.addEventListener('click', () => audio.setSfx(!audio.settings.sfx));
   audio.onChange((s) => {
@@ -394,16 +397,39 @@ function bindEvents() {
     els.musicBtn.title = s.music ? 'Matikan musik' : 'Nyalakan musik';
     els.sfxBtn.title = s.sfx ? 'Matikan efek suara' : 'Nyalakan efek suara';
   });
-  els.restartBtn.addEventListener('click', () => openModal(els.confirmModal, els.confirmNo));
-  els.confirmNo.addEventListener('click', () => closeModal(els.confirmModal));
-  els.confirmYes.addEventListener('click', () => { closeModal(els.confirmModal); newGame(); });
-  els.confirmModal.addEventListener('click', (e) => { if (e.target === els.confirmModal) closeModal(els.confirmModal); });
-  els.playAgainBtn.addEventListener('click', () => { closeModal(els.winModal); els.confetti.textContent = ''; newGame(); });
+
+  els.restartBtn.addEventListener('click', () => confirmThen(doRestart, {
+    title: 'Restart permainan?',
+    text: 'Papan kembali ke susunan awal yang sama. Skor & progres saat ini hilang.',
+    yes: 'Restart',
+  }));
+  els.newGameBtn.addEventListener('click', () => confirmThen(doNewGame, {
+    title: 'Mulai New Game?',
+    text: 'Susunan tiles baru akan dibuat. Skor & progres saat ini hilang.',
+    yes: 'New Game',
+  }));
+  els.confirmNo.addEventListener('click', () => { pendingConfirm = null; closeModal(els.confirmModal); });
+  els.confirmYes.addEventListener('click', () => {
+    const action = pendingConfirm;
+    pendingConfirm = null;
+    closeModal(els.confirmModal);
+    action?.();
+  });
+  els.confirmModal.addEventListener('click', (e) => {
+    if (e.target === els.confirmModal) { pendingConfirm = null; closeModal(els.confirmModal); }
+  });
+  els.overRestartBtn.addEventListener('click', doRestart);
+  els.overNewGameBtn.addEventListener('click', doNewGame);
+  els.winNewGameBtn.addEventListener('click', doNewGame);
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !els.confirmModal.hidden) closeModal(els.confirmModal);
+    if (e.key === 'Escape' && !els.confirmModal.hidden) { pendingConfirm = null; closeModal(els.confirmModal); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { save(); return; }
+    // Kembali ke aplikasi: timer combo tetap berjalan selama aplikasi disembunyikan.
+    if (state && checkComboTimeout(state, performance.now())) gameOver();
+  });
 }
 
 // ---------------------------------------------------------------- service worker
@@ -439,7 +465,12 @@ async function start() {
   renderBoard(true);
   updateStats();
   save();
-  checkDeadlock();
+  if (state.over) {
+    // Permainan tersimpan berakhir (mis. aplikasi ditutup saat combo berjalan).
+    later(gameOver, 400);
+  } else if (state.matches === 0) {
+    setNotice(START_HINT);
+  }
   // Muat musik di latar belakang setelah papan tampil (diputar pada sentuhan pertama).
   if (audio.settings.music) window.setTimeout(() => audio.preload(), 300);
 }

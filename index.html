@@ -79,25 +79,43 @@
     </div>
 
     <div class="actions">
-      <button class="btn btn-primary" id="shuffleBtn" type="button">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
-        <span>Shuffle <small>−50% skor</small></span>
-      </button>
       <button class="btn" id="restartBtn" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>
-        <span>Restart</span>
+        <span>Restart <small>susunan sama</small></span>
+      </button>
+      <button class="btn btn-primary" id="newGameBtn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><path d="M17 3v6M14 6h6"/></svg>
+        <span>New Game <small>susunan baru</small></span>
       </button>
     </div>
   </main>
 
-  <!-- Dialog konfirmasi restart -->
+  <!-- Dialog konfirmasi (Restart / New Game saat permainan berjalan) -->
   <div class="modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
     <div class="modal-card">
-      <h2 id="confirmTitle">Mulai permainan baru?</h2>
-      <p>Skor dan papan saat ini akan hilang.</p>
+      <h2 id="confirmTitle">Restart permainan?</h2>
+      <p id="confirmText">Skor dan progres saat ini akan hilang.</p>
       <div class="modal-actions">
         <button class="btn" id="confirmNo" type="button">Batal</button>
         <button class="btn btn-primary" id="confirmYes" type="button">Restart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layar game over -->
+  <div class="modal modal-over" id="overModal" role="dialog" aria-modal="true" aria-labelledby="overTitle" hidden>
+    <div class="modal-card">
+      <div class="logo logo-sm" aria-label="NGONET">
+        <span>N</span><span>G</span><span class="logo-o">O</span><span>N</span><span>E</span><span>T</span>
+      </div>
+      <h2 class="over-title" id="overTitle">GAME OVER</h2>
+      <p class="over-reason" id="overReason">Combo terputus</p>
+      <p class="win-label">Skor</p>
+      <p class="win-score" id="overScore">0</p>
+      <p class="over-progress" id="overProgress"></p>
+      <div class="modal-actions">
+        <button class="btn" id="overRestartBtn" type="button">Restart</button>
+        <button class="btn btn-primary" id="overNewGameBtn" type="button">New Game</button>
       </div>
     </div>
   </div>
@@ -115,7 +133,7 @@
       <p class="win-label">Skor akhir</p>
       <p class="win-score" id="winScore">0</p>
       <p class="win-best" id="winBest"></p>
-      <button class="btn btn-primary btn-wide" id="playAgainBtn" type="button">PLAY AGAIN</button>
+      <button class="btn btn-primary btn-wide" id="winNewGameBtn" type="button">New Game</button>
     </div>
   </div>
 </body>

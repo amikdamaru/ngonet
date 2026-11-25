@@ -40,10 +40,14 @@
       d.querySelectorAll('.link-line, .link-dot').forEach((n) => { n.style.animation = 'none'; n.style.strokeDashoffset = '0'; });
       d.querySelectorAll('.combo-bar i').forEach((n) => { n.style.animation = 'none'; });
       const c = st().board.findIndex(Boolean); el(c).click();
+    } else if (scene === 'over') {
+      for (let k = 0; k < 3; k++) { const p = pair(); if (!p) break; el(p[0]).click(); el(p[1]).click(); await sleep(60); }
+      while (d.getElementById('overModal').hidden) await sleep(100);
+      await sleep(600);
     } else if (scene === 'win') {
       for (let g = 0; g < 400 && st().board.some(Boolean); g++) {
         const pr = pair();
-        if (!pr) { d.getElementById('shuffleBtn').click(); await sleep(450); continue; }
+        if (!pr) break;
         el(pr[0]).click(); el(pr[1]).click(); await sleep(30);
       }
       while (d.getElementById('winModal').hidden) await sleep(50);

@@ -1,7 +1,7 @@
 // State dan aturan permainan NGONET (murni, tanpa DOM, sehingga mudah diuji).
 import { ROWS, COLS, PAIRS, TOTAL_ASSETS, MAX_TURNS, TILE_GROUPS, MAX_COPIES, validateGroups } from './config.js';
 import { findPath } from './pathfinder.js';
-import { scoreMatch, shufflePenalty } from './scoring.js';
+import { scoreMatch, comboExpired } from './scoring.js';
 import { buildSolvableBoard, pairUp } from './generator.js';
 
 export function shuffleInPlace(arr, rng = Math.random) {
@@ -33,27 +33,38 @@ export function createGame(rng = Math.random, groups = TILE_GROUPS) {
       for (let c = 0; c < g.copies; c++) tiles.push({ id: id++, type: types[k] });
     }
   }
-  const state = {
+  const state = freshState(tiles);
+  arrangeSolvable(state, rng);
+  state.initial = state.board.slice(); // susunan awal sesi ini (dipakai Restart)
+  return state;
+}
+
+function freshState(board, initial = null) {
+  return {
     rows: ROWS,
     cols: COLS,
-    board: tiles,           // indeks = r * cols + c; null = kosong
+    initial,                // susunan awal sesi (tidak pernah berubah)
+    board,                  // indeks = r * cols + c; null = kosong
     score: 0,
     combo: 0,
     lastMatchAt: null,
     matches: 0,
-    shuffles: 0,
+    over: null,             // null | 'combo' (combo putus) | 'stuck' (tidak ada pasangan)
   };
-  arrangeSolvable(state, rng);
-  return state;
+}
+
+/** Restart: mulai ulang sesi yang sama dengan susunan awal yang identik. */
+export function restartGame(state) {
+  return freshState(state.initial.slice(), state.initial);
 }
 
 /**
- * Susun ulang tile yang tersisa pada sel-sel yang masih terisi menjadi susunan yang
- * DIJAMIN bisa diselesaikan (lihat generator.js).
+ * Susun tile pada sel-sel yang terisi menjadi susunan yang DIJAMIN bisa diselesaikan
+ * (lihat generator.js).
  *
  * Untuk gambar yang muncul 2x, papan solvable tidak bisa buntu. Gambar yang muncul 4x/6x
  * memberi pemain pilihan pasangan; pilihan yang kurang tepat BISA membuat papan buntu —
- * itulah unsur strateginya, dan Shuffle kembali menyusun papan yang solvable.
+ * itulah unsur strateginya (papan buntu = game over).
  * Fallback (praktis tidak pernah terjadi): acak seragam.
  */
 export function arrangeSolvable(state, rng = Math.random) {
@@ -89,11 +100,24 @@ export function pathBetween(state, i, j) {
 }
 
 /**
+ * Periksa apakah combo sudah putus pada waktu `now`. Jika ya, permainan berakhir (over = 'combo').
+ * @returns {string|null} alasan game over
+ */
+export function checkComboTimeout(state, now) {
+  if (!state.over && !isWon(state) && comboExpired(state.lastMatchAt, now)) state.over = 'combo';
+  return state.over;
+}
+
+/**
  * Coba cocokkan tile di indeks i dan j. Jika valid, state langsung dikomit:
  * kedua tile dihapus, skor dan combo diperbarui. Animasi di UI hanya kosmetik.
+ * Jika setelah matching tidak ada pasangan yang bisa dihubungkan (dan papan belum habis),
+ * permainan berakhir dengan over = 'stuck'.
  * @returns {{ok:false, reason:string} | {ok:true, path:object, points:number, combo:number, tiles:object[]}}
  */
 export function tryMatch(state, i, j, now) {
+  if (state.over) return { ok: false, reason: 'over' };
+  if (checkComboTimeout(state, now)) return { ok: false, reason: 'combo-timeout' };
   if (i === j) return { ok: false, reason: 'same-tile' };
   const a = state.board[i];
   const b = state.board[j];
@@ -109,21 +133,8 @@ export function tryMatch(state, i, j, now) {
   state.lastMatchAt = now;
   state.score += points;
   state.matches += 1;
+  if (!isWon(state) && !hasAvailableMove(state)) state.over = 'stuck';
   return { ok: true, path, points, combo, tiles: [a, b] };
-}
-
-/**
- * Acak ulang posisi tile yang tersisa di antara sel-sel yang masih terisi (susunan solvable).
- * Jumlah tile, jenis, dan pasangan tidak berubah; tile yang hilang tidak kembali.
- * Skor dipotong 50% (Math.ceil) dan combo direset.
- */
-export function shuffleBoard(state, rng = Math.random) {
-  arrangeSolvable(state, rng);
-  state.score = shufflePenalty(state.score);
-  state.combo = 0;
-  state.lastMatchAt = null;
-  state.shuffles += 1;
-  return state;
 }
 
 /** Apakah ada setidaknya satu pasangan yang bisa dihubungkan saat ini. */
@@ -146,39 +157,53 @@ export function hasAvailableMove(state) {
 
 // ---- Persistensi ringan (agar permainan tidak hilang saat aplikasi ditutup) ----
 
+// Tile tidak pernah berpindah posisi, jadi cukup simpan susunan awal + sel mana yang masih terisi.
 export function serialize(state) {
   return JSON.stringify({
-    v: 1,
+    v: 2,
     rows: state.rows,
     cols: state.cols,
-    board: state.board.map((t) => (t ? [t.id, t.type] : null)),
+    initial: state.initial.map((t) => (t ? [t.id, t.type] : null)),
+    alive: state.board.map((t) => (t ? 1 : 0)).join(''),
     score: state.score,
     matches: state.matches,
-    shuffles: state.shuffles,
+    over: state.over,
   });
 }
 
+/**
+ * Muat permainan tersimpan. Permainan yang ditutup saat combo berjalan (sudah ada match) tidak
+ * bisa dilanjutkan karena waktunya pasti terlewati → dimuat sebagai GAME OVER (combo putus),
+ * sehingga pemain bisa memilih Restart (susunan sama) atau New Game.
+ */
 export function deserialize(json) {
   const d = JSON.parse(json);
-  if (!d || d.v !== 1 || d.rows !== ROWS || d.cols !== COLS) return null;
-  if (!Array.isArray(d.board) || d.board.length !== ROWS * COLS) return null;
-  const board = d.board.map((t) => (t ? { id: t[0], type: t[1] } : null));
-  // Validasi: setiap jenis muncul genap (≤ MAX_COPIES), jenis dalam rentang aset, id unik.
+  if (!d || d.v !== 2 || d.rows !== ROWS || d.cols !== COLS) return null;
+  if (!Array.isArray(d.initial) || d.initial.length !== ROWS * COLS) return null;
+  if (typeof d.alive !== 'string' || !/^[01]+$/.test(d.alive) || d.alive.length !== ROWS * COLS) return null;
+  const initial = d.initial.map((t) => (Array.isArray(t) ? { id: t[0], type: t[1] } : null));
+  // Validasi susunan awal: penuh, jenis dalam rentang aset, id unik, tiap jenis muncul genap ≤ MAX_COPIES.
   const counts = new Map();
   const ids = new Set();
-  for (const t of board) {
-    if (!t) continue;
+  for (const t of initial) {
+    if (!t) return null;
     if (!Number.isInteger(t.type) || t.type < 1 || t.type > TOTAL_ASSETS) return null;
     if (ids.has(t.id)) return null;
     ids.add(t.id);
     counts.set(t.type, (counts.get(t.type) || 0) + 1);
   }
   for (const n of counts.values()) if (n % 2 !== 0 || n > MAX_COPIES) return null;
-  if (ids.size === 0) return null; // permainan selesai: mulai baru
-  const score = Number.isFinite(d.score) && d.score >= 0 ? Math.floor(d.score) : 0;
-  return {
-    rows: ROWS, cols: COLS, board, score,
-    combo: 0, lastMatchAt: null,
-    matches: d.matches | 0, shuffles: d.shuffles | 0,
-  };
+
+  const board = initial.map((t, i) => (d.alive[i] === '1' ? t : null));
+  // Tile yang sudah hilang harus berpasangan: sisa tiap jenis tetap genap.
+  const left = new Map();
+  board.forEach((t) => { if (t) left.set(t.type, (left.get(t.type) || 0) + 1); });
+  for (const n of left.values()) if (n % 2 !== 0) return null;
+
+  const state = freshState(board, initial);
+  state.score = Number.isFinite(d.score) && d.score >= 0 ? Math.floor(d.score) : 0;
+  state.matches = Math.max(0, d.matches | 0);
+  state.over = d.over === 'combo' || d.over === 'stuck' ? d.over : null;
+  if (!state.over && !isWon(state) && state.matches > 0) state.over = 'combo';
+  return state;
 }
