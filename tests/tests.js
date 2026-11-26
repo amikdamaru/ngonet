@@ -529,8 +529,8 @@ const $id = (id) => app.doc.getElementById(id);
 const boardSig = (b) => b.map((t) => t && `${t.id}:${t.type}`).join();
 /** Klik New Game dari kondisi apa pun (konfirmasi / modal game over / modal menang). */
 async function clickNewGame() {
-  if (!$id('overModal').hidden) $id('overNewGameBtn').click();
-  else if (!$id('winModal').hidden) $id('winNewGameBtn').click();
+  if (!$id('overModal').hidden) { $id('overRestartBtn').click(); await sleep(50); } // game over: hanya Retry
+  if (!$id('winModal').hidden) $id('winNewGameBtn').click();
   else {
     $id('newGameBtn').click();
     if (!$id('confirmModal').hidden) $id('confirmYes').click();
@@ -547,6 +547,8 @@ async function playMoves(seq, n, gap = 40) {
 
 await test('Tidak ada tombol Shuffle; tersedia Restart & New Game', async () => {
   eq($id('shuffleBtn'), null, 'tombol Shuffle harus hilang');
+  eq($id('best'), null, 'Best score harus hilang');
+  assert($id('wins'), 'win counter tampil');
   assert($id('restartBtn') && $id('newGameBtn'), 'tombol Restart & New Game');
 });
 
@@ -572,22 +574,24 @@ await test('E2E skor & combo: 10 → 30 → 60, indikator COMBO x2/x3, garis tam
   eq(app.doc.querySelectorAll('.tile').length, 58, 'elemen DOM terhapus tepat sekali');
 });
 
-await test('E2E GAME OVER: jeda > 3 detik → modal Game Over dengan Restart & New Game', async () => {
+await test('E2E GAME OVER: jeda > 3 detik → modal Game Over hanya dengan tombol Retry', async () => {
   const st = S();
   await waitFor(() => !$id('overModal').hidden, 4500);
   eq(st.over, 'combo', 'state.over');
   assert(/Combo terputus/.test($id('overReason').textContent), 'alasan combo putus');
   eq(Number($id('overScore').textContent), 60, 'skor game over');
   assert(/3\/32/.test($id('overProgress').textContent), 'progres 3/32');
-  eq($id('overRestartBtn').textContent.trim(), 'Restart', 'tombol Restart');
-  eq($id('overNewGameBtn').textContent.trim(), 'New Game', 'tombol New Game');
+  eq($id('overRestartBtn').textContent.trim(), 'Retry', 'tombol Retry');
+  eq($id('overNewGameBtn'), null, 'tidak ada tombol New Game di Game Over');
+  eq($id('overModal').querySelectorAll('button').length, 1, 'satu-satunya pilihan: Retry');
+  assert(!/Best/.test($id('overProgress').textContent), 'tidak ada Best score');
   // papan terkunci
   const i = st.board.findIndex(Boolean);
   tileEl(app.doc, st, i).click();
   eq(app.win.__ngonet.selected, null, 'tile tidak bisa dipilih setelah game over');
 });
 
-await test('E2E Restart dari Game Over: susunan tiles sama persis, skor 0', async () => {
+await test('E2E Retry dari Game Over: susunan tiles sama persis, skor 0', async () => {
   const initialSig = boardSig(S().initial);
   $id('overRestartBtn').click();
   assert($id('overModal').hidden, 'modal tertutup');
@@ -684,8 +688,10 @@ await test('BGM: file termuat, loop, dan diputar setelah interaksi', async () =>
   return `durasi ${el.duration.toFixed(1)} dtk, volume ${el.volume.toFixed(2)}`;
 });
 
-await test('23–25. Mainkan 32 match beruntun → YOU WIN!, skor 5280, tombol New Game', async () => {
+await test('23–25. Mainkan 32 match beruntun → YOU WIN!, skor 5280, win counter +1, tombol New Game', async () => {
   await clickNewGame();
+  const winsBefore = Number($id('wins').textContent);
+  eq(winsBefore, Number(localStorage.getItem('ngonet:wins') || 0), 'penghitung tampil = tersimpan');
   const seq = solve(S());
   assert(seq, 'papan harus bisa diselesaikan');
   await playMoves(seq, seq.length, 60);
@@ -699,6 +705,10 @@ await test('23–25. Mainkan 32 match beruntun → YOU WIN!, skor 5280, tombol N
   eq(Number($id('winScore').textContent), 5280, 'skor akhir');
   eq(Number($id('winScore').textContent), scoreText(), 'skor akhir = skor tampil');
   eq($id('winNewGameBtn').textContent.trim(), 'New Game', 'tombol New Game');
+  eq(Number($id('wins').textContent), winsBefore + 1, 'win counter +1');
+  eq(Number(localStorage.getItem('ngonet:wins')), winsBefore + 1, 'win counter tersimpan');
+  eq($id('winCount').textContent, `Kemenangan ke-${winsBefore + 1}`, 'teks kemenangan ke-N');
+  assert($id('wins').parentElement.querySelector('svg.crown'), 'ikon mahkota');
   const oldInitial = boardSig(S().initial);
   await sleep(3300);
   assert($id('overModal').hidden, 'timer combo tidak boleh memicu game over setelah menang');
@@ -707,7 +717,8 @@ await test('23–25. Mainkan 32 match beruntun → YOU WIN!, skor 5280, tombol N
   eq(scoreText(), 0, 'skor baru 0');
   eq(remaining(S()), 64, 'papan baru 64 tile');
   assert(boardSig(S().initial) !== oldInitial, 'susunan baru');
-  return `skor akhir 5280`;
+  eq(Number($id('wins').textContent), winsBefore + 1, 'New Game tidak menambah win counter');
+  return `skor akhir 5280, wins ${winsBefore} → ${winsBefore + 1}`;
 });
 
 // ============================================================ UI / layout

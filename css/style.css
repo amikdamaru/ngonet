@@ -306,7 +306,15 @@ button { font: inherit; color: inherit; }
 .win-title span:nth-child(7) { animation-delay: .30s; }
 .win-label { text-transform: uppercase; letter-spacing: .14em; font-size: 11px !important; font-weight: 700; margin-top: 8px !important; }
 .win-score { font-size: 44px !important; font-weight: 900; color: var(--text) !important; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.win-best { min-height: 20px; margin-bottom: 16px !important; font-weight: 700; color: var(--accent-dark) !important; }
+.win-count { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 24px; margin-bottom: 16px !important; font-weight: 800; color: var(--accent-dark) !important; }
+.win-count .crown { width: 22px; height: 22px; }
+.over-retry { margin-top: 14px; }
+
+/* Penghitung kemenangan (ikon mahkota) */
+.crown { width: 20px; height: 20px; fill: var(--accent); flex: none; }
+.stat-wins .stat-value { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-dark); }
+.stat-wins .stat-value.bump .crown { animation: crown-pop .6s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes crown-pop { 0% { transform: scale(.6) rotate(-12deg); } 60% { transform: scale(1.3) rotate(8deg); } 100% { transform: none; } }
 
 .confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .confetti i {

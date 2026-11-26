@@ -7,6 +7,8 @@ Permainan Onet Classic bertema perabotan & perlengkapan rumah tangga. Papan 8×8
 **Aturan:** match pertama memulai timer combo; setiap match berikutnya harus dalam 3 detik (`COMBO_WINDOW_MS`).
 Combo putus atau papan buntu = **GAME OVER** — targetnya 32 match beruntun tanpa putus. Tidak ada Shuffle.
 **Restart** mengulang sesi dengan susunan tiles yang sama persis; **New Game** membuat susunan baru.
+Saat game over satu-satunya pilihan adalah **Retry** (susunan sama). Setiap kemenangan menambah penghitung
+**Wins** (ikon mahkota), tersimpan di perangkat.
 Dapat di-install sebagai PWA yang berjalan offline. Tanpa backend, tanpa build step: HTML + CSS + JavaScript (ES modules).
 
 ## Menjalankan

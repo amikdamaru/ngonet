@@ -59,9 +59,9 @@
         <span class="stat-label">Pairs left</span>
         <span class="stat-value" id="pairs">32</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Best</span>
-        <span class="stat-value" id="best">0</span>
+      <div class="stat stat-wins" title="Jumlah kemenangan">
+        <span class="stat-label">Wins</span>
+        <span class="stat-value"><svg class="crown" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5l4.6 4.2L12 4.5l4.4 7.2L21 7.5l-1.9 11H4.9z"/><rect x="5" y="19.5" width="14" height="2" rx="1"/></svg><span id="wins">0</span></span>
       </div>
     </section>
 
@@ -113,10 +113,10 @@
       <p class="win-label">Skor</p>
       <p class="win-score" id="overScore">0</p>
       <p class="over-progress" id="overProgress"></p>
-      <div class="modal-actions">
-        <button class="btn" id="overNewGameBtn" type="button">New Game</button>
-        <button class="btn btn-primary" id="overRestartBtn" type="button">Restart</button>
-      </div>
+      <button class="btn btn-primary btn-wide over-retry" id="overRestartBtn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>
+        <span>Retry</span>
+      </button>
     </div>
   </div>
 
@@ -132,7 +132,7 @@
       </h2>
       <p class="win-label">Skor akhir</p>
       <p class="win-score" id="winScore">0</p>
-      <p class="win-best" id="winBest"></p>
+      <p class="win-count"><svg class="crown" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5l4.6 4.2L12 4.5l4.4 7.2L21 7.5l-1.9 11H4.9z"/><rect x="5" y="19.5" width="14" height="2" rx="1"/></svg><span id="winCount"></span></p>
       <button class="btn btn-primary btn-wide" id="winNewGameBtn" type="button">New Game</button>
     </div>
   </div>

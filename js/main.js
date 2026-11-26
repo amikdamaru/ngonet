@@ -8,20 +8,20 @@ import { preloadImages } from './assets.js';
 import { createAudio } from './audio.js';
 
 const STORAGE_KEY = 'ngonet:game:v2';
-const BEST_KEY = 'ngonet:best';
+const WINS_KEY = 'ngonet:wins';
 
 const $ = (id) => document.getElementById(id);
 const els = {
   loader: $('loader'), loadBar: $('loadBar'), loadText: $('loadText'), loadProgress: $('loadProgress'), retryBtn: $('retryBtn'),
   app: $('app'), board: $('board'), boardWrap: $('boardWrap'), links: $('links'),
-  score: $('score'), scorePop: $('scorePop'), pairs: $('pairs'), best: $('best'),
+  score: $('score'), scorePop: $('scorePop'), pairs: $('pairs'), wins: $('wins'),
   combo: $('combo'), comboText: $('comboText'), comboBar: $('comboBar'),
   notice: $('notice'), restartBtn: $('restartBtn'), newGameBtn: $('newGameBtn'),
   confirmModal: $('confirmModal'), confirmTitle: $('confirmTitle'), confirmText: $('confirmText'),
   confirmYes: $('confirmYes'), confirmNo: $('confirmNo'),
   overModal: $('overModal'), overReason: $('overReason'), overScore: $('overScore'), overProgress: $('overProgress'),
-  overRestartBtn: $('overRestartBtn'), overNewGameBtn: $('overNewGameBtn'),
-  winModal: $('winModal'), winScore: $('winScore'), winBest: $('winBest'), winNewGameBtn: $('winNewGameBtn'), confetti: $('confetti'),
+  overRestartBtn: $('overRestartBtn'),
+  winModal: $('winModal'), winScore: $('winScore'), winCount: $('winCount'), winNewGameBtn: $('winNewGameBtn'), confetti: $('confetti'),
   musicBtn: $('musicBtn'), sfxBtn: $('sfxBtn'),
 };
 
@@ -52,11 +52,12 @@ const store = {
   set(key, val) { try { window.localStorage.setItem(key, val); } catch { /* abaikan */ } },
   del(key) { try { window.localStorage.removeItem(key); } catch { /* abaikan */ } },
 };
-const getBest = () => Math.max(0, parseInt(store.get(BEST_KEY) || '0', 10) || 0);
-/** Simpan skor terbaik; mengembalikan true bila rekor baru. */
-function recordBest(score) {
-  if (score > getBest()) { store.set(BEST_KEY, String(score)); return true; }
-  return false;
+const getWins = () => Math.max(0, parseInt(store.get(WINS_KEY) || '0', 10) || 0);
+/** Tambah penghitung kemenangan; mengembalikan jumlah kemenangan terbaru. */
+function addWin() {
+  const n = getWins() + 1;
+  store.set(WINS_KEY, String(n));
+  return n;
 }
 function save() {
   if (!state) return;
@@ -128,7 +129,7 @@ function renderBoard(animateIn) {
 function updateStats() {
   els.score.textContent = String(state.score);
   els.pairs.textContent = String(remaining(state) / 2);
-  els.best.textContent = String(getBest());
+  els.wins.textContent = String(getWins());
 }
 
 function popScore(text) {
@@ -303,28 +304,25 @@ function gameOver() {
   hideCombo();
   els.board.classList.add('is-over');
   audio.sfx.fail();
-  const best = getBest();
-  const isBest = recordBest(state.score);
   save();
   updateStats();
   els.overReason.textContent = state.over === 'stuck'
     ? 'Tidak ada pasangan yang bisa dihubungkan'
     : `Combo terputus — lebih dari ${COMBO_WINDOW_MS / 1000} detik tanpa match`;
   els.overScore.textContent = String(state.score);
-  els.overProgress.textContent = `${state.matches}/${PAIRS} pasangan`
-    + (isBest && state.score > 0 ? ' · Rekor baru!' : ` · Best: ${Math.max(best, state.score)}`);
+  els.overProgress.textContent = `${state.matches}/${PAIRS} pasangan`;
   closeModal(els.confirmModal);
   openModal(els.overModal, els.overRestartBtn);
 }
 
 function showWin() {
   const final = state.score;
-  const prevBest = getBest();
-  const isBest = recordBest(final);
+  const wins = addWin();
   store.del(STORAGE_KEY);
   els.winScore.textContent = String(final);
-  els.winBest.textContent = isBest && final > 0 ? 'Rekor baru!' : `Best: ${Math.max(prevBest, final)}`;
+  els.winCount.textContent = `Kemenangan ke-${wins}`;
   updateStats();
+  restartAnim(els.wins.parentElement, 'bump');
 
   els.confetti.textContent = '';
   if (!reduced()) {
@@ -419,7 +417,6 @@ function bindEvents() {
     if (e.target === els.confirmModal) { pendingConfirm = null; closeModal(els.confirmModal); }
   });
   els.overRestartBtn.addEventListener('click', doRestart);
-  els.overNewGameBtn.addEventListener('click', doNewGame);
   els.winNewGameBtn.addEventListener('click', doNewGame);
 
   document.addEventListener('keydown', (e) => {

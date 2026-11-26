@@ -10,7 +10,7 @@
  * - Activate : hapus cache versi lama.
  * Naikkan CACHE_VERSION setiap rilis agar precache diperbarui.
  */
-const CACHE_VERSION = 'ngonet-v6';
+const CACHE_VERSION = 'ngonet-v7';
 // File media besar (BGM ±5 MB) disimpan di cache terpisah agar tidak diunduh ulang setiap
 // CACHE_VERSION naik. Naikkan MEDIA_VERSION hanya bila file audionya diganti.
 const MEDIA_VERSION = 'ngonet-media-v1';
